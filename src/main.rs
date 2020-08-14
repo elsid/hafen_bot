@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate hexf;
+#[macro_use]
 extern crate log;
 
 use self::bot::run_server;
