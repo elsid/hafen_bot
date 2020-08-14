@@ -4,6 +4,7 @@ use crate::bot::player::{Player, PlayerData};
 use crate::bot::protocol::{Message, Update};
 use crate::bot::tasks::exp_wnd_closer::ExpWndCloser;
 use crate::bot::tasks::explorer::Explorer;
+use crate::bot::tasks::new_character::{NewCharacter, NewCharacterParams};
 use crate::bot::tasks::task::Task;
 use crate::bot::world::{World, WorldData};
 
@@ -100,10 +101,16 @@ impl Session {
     }
 }
 
-fn make_task(name: &str, _params: &[u8]) -> Result<Box<dyn Task>, String> {
+fn make_task(name: &str, params: &[u8]) -> Result<Box<dyn Task>, String> {
     match name {
         "Explorer" => Ok(Box::new(Explorer::new())),
         "ExpWndCloser" => Ok(Box::new(ExpWndCloser::new())),
+        "NewCharacter" => {
+            match serde_json::from_slice::<NewCharacterParams>(params) {
+                Ok(parsed) => Ok(Box::new(NewCharacter::new(parsed))),
+                Err(e) => Err(format!("Failed to parse {} task params: {}", name, e)),
+            }
+        }
         _ => Err(String::from("Task is not found")),
     }
 }

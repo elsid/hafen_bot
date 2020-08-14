@@ -180,6 +180,10 @@ pub fn tile_pos_to_pos(tile_pos: Vec2i) -> Vec2f {
     rel_tile_pos_to_pos(Vec2f::from(tile_pos))
 }
 
+pub fn map_pos_to_pos(map_pos: Vec2i) -> Vec2f {
+    map_pos.center() * RESOLUTION
+}
+
 pub fn pos_to_map_pos(pos: Vec2f) -> Vec2i {
     Vec2i::from(pos.floor_by(RESOLUTION))
 }
