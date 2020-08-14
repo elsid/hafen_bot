@@ -396,19 +396,23 @@ impl<'a> PlayerWorld<'a> {
                 true
             }
         };
+        let mut prev_tile_pos = None;
         walk_grid(src_rel_tile_pos, dst_rel_tile_pos, |position| {
             if src_rel_tile_pos.distance(position) > max_length {
                 return false;
             }
             let tile_pos = Vec2i::from(position.floor());
-            let right = tile_pos + Vec2i::only_x(1);
-            let left = tile_pos - Vec2i::only_x(1);
-            let top = tile_pos + Vec2i::only_y(1);
-            let bottom = tile_pos - Vec2i::only_y(1);
-            if !is_allowed(tile_pos) || !is_allowed(right) || !is_allowed(left)
-                || !is_allowed(top) || !is_allowed(bottom) {
+            if !is_allowed(tile_pos) {
                 return false;
             }
+            if let Some(prev) = prev_tile_pos {
+                let shift = tile_pos - prev;
+                if (shift.x() != 0 && !is_allowed(prev + shift.with_x(0)))
+                    || (shift.y() != 0 && !is_allowed(prev + shift.with_y(0))) {
+                    return false;
+                }
+            }
+            prev_tile_pos = Some(tile_pos);
             true
         })
     }

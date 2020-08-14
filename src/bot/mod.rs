@@ -14,3 +14,4 @@ mod player;
 mod objects;
 mod stuck_detector;
 mod explorer;
+mod exp_wnd_closer;
