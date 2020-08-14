@@ -1,15 +1,19 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use actix_web::{Error, HttpResponse, web};
 use actix_web::dev::Server;
 use futures::StreamExt;
+use rusqlite::Connection;
 use serde::Deserialize;
 
+use crate::bot::map_db::MapDb;
 use crate::bot::process::{count_updates, push_update, start_process_session, UpdatesQueue};
 use crate::bot::protocol::{Message, SessionInfo, Update};
 use crate::bot::session::{Session, SessionData};
+use crate::bot::sqlite_map_db::SqliteMapDb;
 use crate::bot::visualization::start_visualize_session;
 
 #[derive(Clone)]
@@ -19,6 +23,7 @@ struct State {
     sessions: Arc<Mutex<HashMap<i64, Arc<RwLock<Session>>>>>,
     processors: Arc<Mutex<HashMap<i64, JoinHandle<()>>>>,
     visualizers: Arc<Mutex<HashMap<i64, Vec<JoinHandle<()>>>>>,
+    map_db: Arc<Mutex<dyn MapDb + Send>>,
 }
 
 pub fn run_server() -> std::io::Result<Server> {
@@ -30,6 +35,10 @@ pub fn run_server() -> std::io::Result<Server> {
         sessions: Arc::new(Mutex::new(HashMap::new())),
         processors: Arc::new(Mutex::new(HashMap::new())),
         visualizers: Arc::new(Mutex::new(HashMap::new())),
+        map_db: Arc::new(Mutex::new(SqliteMapDb::new(
+            Connection::open("map.db").unwrap(),
+            Duration::from_secs(1),
+        ))),
     };
 
     Ok(HttpServer::new(move || {
@@ -77,7 +86,7 @@ async fn push(state: web::Data<State>, payload: web::Payload) -> Result<HttpResp
         return Ok(HttpResponse::Ok().json(&Message::Ok));
     }
     info!("Create new session: {}", session_id);
-    let new_session = Session::new(session_id);
+    let new_session = Session::new(session_id, state.map_db.clone());
     let session = state.sessions.lock().unwrap()
         .entry(session_id)
         .or_insert_with(|| Arc::new(RwLock::new(new_session)))
@@ -192,7 +201,7 @@ async fn set_session(state: web::Data<State>, query: web::Query<SetSession>, pay
             return Ok(HttpResponse::Ok().json(&Message::Error { message: String::from("Failed to parse session data") }));
         }
     };
-    let session = match Session::from_session_data(session_data) {
+    let session = match Session::from_session_data(session_data, state.map_db.clone()) {
         Ok(v) => v,
         Err(e) => {
             error!("Failed to create session from data: {}", e);
@@ -255,7 +264,7 @@ async fn add_visualization(state: web::Data<State>, query: web::Query<AddVisuali
                 state.visualizers.lock().unwrap()
                     .entry(session_id)
                     .or_insert_with(Vec::new)
-                    .push(start_visualize_session(session_id, session, scene, updates, messages));
+                    .push(start_visualize_session(session_id, session, scene, updates, messages, state.map_db.clone()));
                 Message::Ok
             })
             .unwrap_or_else(|| Message::Error { message: String::from("Session is not found") })

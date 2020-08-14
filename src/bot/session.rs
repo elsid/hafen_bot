@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::bot::bot::Bot;
 use crate::bot::exp_wnd_closer::ExpWndCloser;
 use crate::bot::explorer::Explorer;
+use crate::bot::map_db::MapDb;
 use crate::bot::new_character::{NewCharacter, NewCharacterParams};
 use crate::bot::path_finder::PathFinder;
 use crate::bot::player::{Player, PlayerData};
@@ -28,22 +29,22 @@ struct BotWithParams {
 }
 
 impl Session {
-    pub fn new(id: i64) -> Self {
+    pub fn new(id: i64, map_db: Arc<Mutex<dyn MapDb + Send>>) -> Self {
         Self {
             id,
             last_update: 0,
-            world: World::new(),
+            world: World::new(map_db),
             player: Player::default(),
             bots: Arc::new(RwLock::new(Vec::new())),
             scene: Scene::new(),
         }
     }
 
-    pub fn from_session_data(session_data: SessionData) -> Result<Self, String> {
+    pub fn from_session_data(session_data: SessionData, map_db: Arc<Mutex<dyn MapDb + Send>>) -> Result<Self, String> {
         Ok(Self {
             id: session_data.id,
             last_update: 0,
-            world: World::from_world_data(session_data.world),
+            world: World::from_world_data(session_data.world, map_db),
             player: Player::from_player_data(session_data.player),
             bots: {
                 let mut bots = Vec::new();

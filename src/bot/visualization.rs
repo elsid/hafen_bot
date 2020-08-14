@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::ops::DerefMut;
+use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{JoinHandle, spawn};
 use std::time::{Duration, Instant};
@@ -25,6 +25,7 @@ use piston::window::WindowSettings;
 use sdl2_window::Sdl2Window;
 
 use crate::bot::map::{Grid, grid_pos_to_pos, GRID_SIZE, tile_index_to_tile_pos, TILE_SIZE};
+use crate::bot::map_db::MapDb;
 use crate::bot::process::{count_updates, UpdatesQueue};
 use crate::bot::protocol::Message;
 use crate::bot::scene::{CompositeVecNode, Context, DebugTextNode, EllipseNode, ImageNode, MapTransformBoxNode, Node, Scene, TextNode};
@@ -33,14 +34,15 @@ use crate::bot::vec2::{Vec2f, Vec2i};
 use crate::bot::world::PlayerWorld;
 
 pub fn start_visualize_session(session_id: i64, session: Arc<RwLock<Session>>, scene: Scene,
-                               updates: Arc<UpdatesQueue>,
-                               messages: Arc<Mutex<VecDeque<Message>>>) -> JoinHandle<()> {
-    spawn(move || visualize_session(session_id, session, scene.nodes(), updates, messages))
+                               updates: Arc<UpdatesQueue>, messages: Arc<Mutex<VecDeque<Message>>>,
+                               map_db: Arc<Mutex<dyn MapDb + Send>>) -> JoinHandle<()> {
+    spawn(move || visualize_session(session_id, session, scene.nodes(), updates, messages, map_db))
 }
 
 fn visualize_session(session_id: i64, session: Arc<RwLock<Session>>,
                      layers: Arc<Mutex<BTreeMap<usize, Arc<Mutex<Node>>>>>,
-                     updates: Arc<UpdatesQueue>, messages: Arc<Mutex<VecDeque<Message>>>) {
+                     updates: Arc<UpdatesQueue>, messages: Arc<Mutex<VecDeque<Message>>>,
+                     map_db: Arc<Mutex<dyn MapDb + Send>>) {
     let opengl = OpenGL::V4_5;
     let mut window: Sdl2Window = WindowSettings::new(format!("Session {}", session_id), [1920, 1080])
         .graphics_api(opengl)
@@ -48,7 +50,7 @@ fn visualize_session(session_id: i64, session: Arc<RwLock<Session>>,
         .build()
         .unwrap();
     let mut events = Events::new(EventSettings::new().ups(60));
-    let mut visualizer = Visualizer::new(opengl, session_id, session, updates, messages);
+    let mut visualizer = Visualizer::new(opengl, session_id, session, updates, messages, map_db);
 
     while let Some(e) = events.next(&mut window) {
         if let Some(args) = e.render_args() {
@@ -84,6 +86,7 @@ struct Visualizer<'a> {
     session: Arc<RwLock<Session>>,
     updates: Arc<UpdatesQueue>,
     messages: Arc<Mutex<VecDeque<Message>>>,
+    map_db: Arc<Mutex<dyn MapDb + Send>>,
     frame_number: usize,
     fps: FpsMovingAverage,
     render_duration: DurationMovingAverage,
@@ -95,13 +98,16 @@ struct Visualizer<'a> {
     last_player_segment_id: Option<i64>,
     last_world_revision: Option<u64>,
     world_scene: WorldScene,
+    map_db_scene: MapDbScene,
     world_node: RefCell<Node>,
     debug_node: RefCell<Node>,
+    map_db_node: RefCell<Node>,
 }
 
 impl Visualizer<'_> {
     fn new(opengl: OpenGL, session_id: i64, session: Arc<RwLock<Session>>,
-           updates: Arc<UpdatesQueue>, messages: Arc<Mutex<VecDeque<Message>>>) -> Self {
+           updates: Arc<UpdatesQueue>, messages: Arc<Mutex<VecDeque<Message>>>,
+           map_db: Arc<Mutex<dyn MapDb + Send>>) -> Self {
         Self {
             gl: GlGraphics::new(opengl),
             glyphs: RefCell::new(GlyphCache::new(
@@ -113,6 +119,7 @@ impl Visualizer<'_> {
             session,
             updates,
             messages,
+            map_db,
             frame_number: 0,
             fps: FpsMovingAverage::new(100, Duration::from_secs(1)),
             render_duration: DurationMovingAverage::new(100, Duration::from_secs(1)),
@@ -124,8 +131,10 @@ impl Visualizer<'_> {
             last_player_segment_id: None,
             last_world_revision: None,
             world_scene: WorldScene::default(),
+            map_db_scene: MapDbScene::default(),
             world_node: RefCell::new(Node::Empty),
             debug_node: RefCell::new(Node::Empty),
+            map_db_node: RefCell::new(Node::Empty),
         }
     }
 
@@ -155,6 +164,7 @@ impl Visualizer<'_> {
         let start = Instant::now();
         let world_node = self.world_node.borrow();
         let debug_node = self.debug_node.borrow();
+        let map_db_node = self.map_db_node.borrow();
         let scale = self.scale;
         let shift = self.shift;
         let mut glyphs = self.glyphs.borrow_mut();
@@ -162,6 +172,7 @@ impl Visualizer<'_> {
         self.gl.draw(args.viewport(), |base_context, g| {
             clear([0.0, 0.0, 0.0, 1.0], g);
             let context = &Context { base: &base_context, scale, shift };
+            nodes_count += map_db_node.draw(&context, base_context.transform, glyphs.deref_mut(), g);
             nodes_count += world_node.draw(&context, base_context.transform, glyphs.deref_mut(), g);
             for layer in nodes.lock().unwrap().values() {
                 nodes_count += layer.lock().unwrap().draw(&context, base_context.transform, glyphs.deref_mut(), g);
@@ -195,7 +206,10 @@ impl Visualizer<'_> {
                 self.world_node = RefCell::new(self.world_scene.make_node(&world));
                 self.last_world_revision = Some(world.revision());
             }
+            self.map_db_node = RefCell::new(self.map_db_scene.make_node(&self.map_db, &world));
             debug_text.push(format!("revision: {}", world.revision()));
+            debug_text.push(format!("local grids: {}", self.world_scene.grids.len()));
+            debug_text.push(format!("db grids: {}", self.map_db_scene.grids.len()));
             debug_text.push(format!("objects: {}", world.objects_len()));
             debug_text.push(format!("player segment id: {}", world.player_segment_id()));
             debug_text.push(format!("player grid id: {:?}", world.player_grid_id()));
@@ -273,6 +287,39 @@ impl WorldScene {
                         .trans(name_position.x(), name_position.y())
                         .scale(0.5, 0.5),
                 }));
+            }
+        }
+        Node::from(MapTransformBoxNode {
+            node: Box::new(Node::from(CompositeVecNode { nodes })),
+        })
+    }
+}
+
+#[derive(Default)]
+struct MapDbScene {
+    grids: HashMap<i64, GridTexture>,
+}
+
+impl MapDbScene {
+    fn make_node(&mut self, map_db: &Arc<Mutex<dyn MapDb + Send>>, world: &PlayerWorld) -> Node {
+        let mut nodes: Vec<Node> = Vec::new();
+        let locked_map_db = map_db.lock().unwrap();
+        if let Some((shift, grid_ids)) = locked_map_db.get_grid_by_id(world.player_segment_id())
+            .and_then(|grid| {
+                let locked_grid = grid.lock().unwrap();
+                world.get_grid_by_id(locked_grid.id)
+                    .map(|world_grid| (
+                        world_grid.position - locked_grid.position,
+                        locked_map_db.get_grid_ids_by_segment_id(locked_grid.segment_id),
+                    ))
+            }) {
+            for grid_id in grid_ids.into_iter() {
+                if world.get_grid_by_id(grid_id).is_none() {
+                    if let Some(grid) = locked_map_db.get_grid_by_id(grid_id) {
+                        let locked = grid.lock().unwrap();
+                        add_grid_node(locked.deref(), shift, world, &mut self.grids, &mut nodes);
+                    }
+                }
             }
         }
         Node::from(MapTransformBoxNode {

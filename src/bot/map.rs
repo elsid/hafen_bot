@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
+use crate::bot::map_db::MapDb;
 use crate::bot::vec2::{Vec2f, Vec2i};
 
 pub const GRID_SIZE: i32 = 100;
@@ -13,25 +15,29 @@ pub struct Map {
     tiles_by_name: BTreeMap<String, i32>,
     grids: BTreeMap<i64, Grid>,
     grids_by_coord: BTreeMap<i64, BTreeMap<Vec2i, i64>>,
+    db: Arc<Mutex<dyn MapDb + Send>>,
 }
 
 impl Map {
-    pub fn new() -> Self {
+    pub fn new(db: Arc<Mutex<dyn MapDb + Send>>) -> Self {
+        let tiles = db.lock().unwrap().get_tiles();
         Self {
-            tiles_by_name: BTreeMap::new(),
-            tiles: BTreeMap::new(),
+            tiles_by_name: tiles.iter().map(|v| (v.name.clone(), v.id)).collect(),
+            tiles: tiles.into_iter().map(|v| (v.id, v)).collect(),
             grids_by_coord: BTreeMap::new(),
             grids: BTreeMap::new(),
+            db,
         }
     }
 
-    pub fn from_map_data(map_data: MapData) -> Self {
+    pub fn from_map_data(map_data: MapData, db: Arc<Mutex<dyn MapDb + Send>>) -> Self {
         let MapData { tiles, grids } = map_data;
         Self {
             tiles_by_name: tiles.iter().map(|v| (v.name.clone(), v.id)).collect(),
             tiles: tiles.into_iter().map(|v| (v.id, v)).collect(),
             grids_by_coord: make_grids_by_coord(&grids),
             grids: grids.into_iter().map(|v| (v.id, v)).collect(),
+            db,
         }
     }
 
@@ -43,12 +49,13 @@ impl Map {
     }
 
     pub fn set_tile(&mut self, tile: Tile) {
+        self.db.lock().unwrap().set_tile(&tile);
         self.tiles_by_name.insert(tile.name.clone(), tile.id);
         self.tiles.insert(tile.id, tile);
     }
 
     pub fn add_grid(&mut self, mut grid: Grid, neighbours: Vec<GridNeighbour>) {
-        let mut segments = neighbours.into_iter()
+        let mut segments = neighbours.iter()
             .filter_map(|v| self.grids.get(&v.id).map(|g| (g.segment_id, v.offset, g.position)))
             .collect::<Vec<_>>();
         if !segments.is_empty() {
@@ -75,6 +82,7 @@ impl Map {
                 }
             }
         }
+        self.db.lock().unwrap().add_grid(grid.id, &grid.heights, &grid.tiles, &neighbours);
         self.grids_by_coord.entry(grid.segment_id)
             .or_insert_with(|| BTreeMap::new())
             .insert(grid.position, grid.id);
@@ -93,6 +101,7 @@ impl Map {
                 }
             }
         }
+        self.db.lock().unwrap().update_grid(grid.id, &grid.heights, &grid.tiles);
         self.grids.insert(grid.id, grid);
     }
 
@@ -102,10 +111,25 @@ impl Map {
             let relative_tile_pos = tile_pos_to_relative_tile_pos(tile_pos, grid_pos);
             return Some(grid.tiles[get_grid_tile_index(relative_tile_pos)]);
         }
-        None
+        self.grids.get(&segment_id).and_then(|local_grid| {
+            let db = self.db.lock().unwrap();
+            db.get_grid_by_id(segment_id).and_then(|db_grid| {
+                let locked_db_grid = db_grid.lock().unwrap();
+                let shift = locked_db_grid.position - local_grid.position;
+                let position = grid_pos + shift;
+                db.get_grid(locked_db_grid.segment_id, position).map(|grid| {
+                    let relative_tile_pos = tile_pos_to_relative_tile_pos(tile_pos + grid_pos_to_tile_pos(shift), position);
+                    if Arc::as_ptr(&db_grid) == Arc::as_ptr(&grid) {
+                        locked_db_grid.tiles[get_grid_tile_index(relative_tile_pos)]
+                    } else {
+                        grid.lock().unwrap().tiles[get_grid_tile_index(relative_tile_pos)]
+                    }
+                })
+            })
+        })
     }
 
-    pub fn get_grid(&self, segment_id: i64, grid_pos: Vec2i) -> Option<&Grid> {
+    fn get_grid(&self, segment_id: i64, grid_pos: Vec2i) -> Option<&Grid> {
         self.grids_by_coord.get(&segment_id)
             .and_then(|v| v.get(&grid_pos))
             .and_then(|id| self.grids.get(&id))
@@ -117,6 +141,7 @@ impl Map {
 
     pub fn get_tile_id_by_name(&self, name: &String) -> Option<i32> {
         self.tiles_by_name.get(name).map(|v| *v)
+            .or_else(|| self.db.lock().unwrap().get_tile_id_by_name(name))
     }
 
     pub fn get_tile_by_id(&self, id: i32) -> Option<&Tile> {
@@ -284,9 +309,47 @@ mod tests {
 
     use super::*;
 
+    #[derive(Default)]
+    struct FakeMapDb {
+        grids_by_id: BTreeMap<i64, Arc<Mutex<Grid>>>,
+        grids_by_segment_id_and_position: BTreeMap<(i64, Vec2i), Arc<Mutex<Grid>>>,
+    }
+
+    impl MapDb for FakeMapDb {
+        fn get_tiles(&self) -> Vec<Tile> {
+            Vec::new()
+        }
+
+        fn get_tile_id_by_name(&self, _name: &String) -> Option<i32> {
+            None
+        }
+
+        fn set_tile(&self, _tile: &Tile) {}
+
+        fn get_grids(&self) -> Vec<Grid> {
+            Vec::new()
+        }
+
+        fn get_grid_ids_by_segment_id(&self, _segment_id: i64) -> Vec<i64> {
+            Vec::new()
+        }
+
+        fn get_grid_by_id(&self, grid_id: i64) -> Option<Arc<Mutex<Grid>>> {
+            self.grids_by_id.get(&grid_id).map(|v| v.clone())
+        }
+
+        fn get_grid(&self, segment_id: i64, position: Vec2i) -> Option<Arc<Mutex<Grid>>> {
+            self.grids_by_segment_id_and_position.get(&(segment_id, position)).map(|v| v.clone())
+        }
+
+        fn add_grid(&self, _grid_id: i64, _heights: &Vec<f32>, _tiles: &Vec<i32>, _neighbours: &Vec<GridNeighbour>) {}
+
+        fn update_grid(&self, _grid_id: i64, _heights: &Vec<f32>, _tiles: &Vec<i32>) {}
+    }
+
     #[test]
     fn added_tile_should_be_accessible() {
-        let mut map = Map::new();
+        let mut map = Map::new(Arc::new(Mutex::new(FakeMapDb::default())));
         let grid = Grid {
             id: 1,
             revision: 1,
@@ -303,7 +366,7 @@ mod tests {
 
     #[test]
     fn adjacent_grids_should_be_stored_in_a_single_segment() {
-        let mut map = Map::new();
+        let mut map = Map::new(Arc::new(Mutex::new(FakeMapDb::default())));
         let grid1 = Grid {
             id: 1,
             revision: 1,
@@ -328,7 +391,7 @@ mod tests {
 
     #[test]
     fn separate_grids_should_be_stored_in_different_segments() {
-        let mut map = Map::new();
+        let mut map = Map::new(Arc::new(Mutex::new(FakeMapDb::default())));
         let grid1 = Grid {
             id: 1,
             revision: 1,
@@ -353,7 +416,7 @@ mod tests {
 
     #[test]
     fn adjacent_grid_to_separated_segments_should_merge_them() {
-        let mut map = Map::new();
+        let mut map = Map::new(Arc::new(Mutex::new(FakeMapDb::default())));
         let grid1 = Grid {
             id: 1,
             revision: 1,
@@ -391,7 +454,7 @@ mod tests {
 
     #[test]
     fn get_grid_should_return_none_for_absent_grid() {
-        let mut map = Map::new();
+        let mut map = Map::new(Arc::new(Mutex::new(FakeMapDb::default())));
         let grid = Grid {
             id: 1,
             revision: 1,
@@ -406,7 +469,7 @@ mod tests {
 
     #[test]
     fn get_grid_should_return_none_for_absent_segment() {
-        let mut map = Map::new();
+        let mut map = Map::new(Arc::new(Mutex::new(FakeMapDb::default())));
         let grid = Grid {
             id: 1,
             revision: 1,
@@ -421,7 +484,7 @@ mod tests {
 
     #[test]
     fn get_tile_should_return_none_for_absent_grid() {
-        let mut map = Map::new();
+        let mut map = Map::new(Arc::new(Mutex::new(FakeMapDb::default())));
         let grid = Grid {
             id: 1,
             revision: 1,
@@ -436,7 +499,7 @@ mod tests {
 
     #[test]
     fn get_tile_should_return_none_for_absent_segment() {
-        let mut map = Map::new();
+        let mut map = Map::new(Arc::new(Mutex::new(FakeMapDb::default())));
         let grid = Grid {
             id: 1,
             revision: 1,
@@ -451,7 +514,7 @@ mod tests {
 
     #[test]
     fn update_grid_should_change_grid_position() {
-        let mut map = Map::new();
+        let mut map = Map::new(Arc::new(Mutex::new(FakeMapDb::default())));
         let mut grid = Grid {
             id: 1,
             revision: 1,
@@ -466,5 +529,122 @@ mod tests {
         assert_eq!(map.get_grid_by_id(1), Some(&grid));
         assert_eq!(map.get_grid(1, Vec2i::new(13, 42)), Some(&grid));
         assert_eq!(map.get_tile(1, grid_pos_to_tile_pos(Vec2i::new(13, 42))), Some(1));
+    }
+
+    #[test]
+    fn get_tile_should_prefer_local_grid() {
+        let grid = Grid {
+            id: 1,
+            revision: 1,
+            segment_id: 1,
+            position: Vec2i::new(42, 13),
+            heights: Vec::new(),
+            tiles: repeat(146).take((GRID_SIZE * GRID_SIZE) as usize).collect(),
+        };
+        let mut db_grid = grid.clone();
+        db_grid.tiles = repeat(3).take((GRID_SIZE * GRID_SIZE) as usize).collect();
+        let grid_arc = Arc::new(Mutex::new(db_grid));
+        let mut map_db = FakeMapDb::default();
+        map_db.grids_by_id.insert(1, grid_arc.clone());
+        map_db.grids_by_segment_id_and_position.insert((grid.segment_id, grid.position), grid_arc);
+        let mut map = Map::new(Arc::new(Mutex::new(map_db)));
+        map.add_grid(grid.clone(), Vec::new());
+        let tile_pos = grid_pos_to_tile_pos(Vec2i::new(42, 13));
+        assert_eq!(map.get_tile(1, tile_pos), Some(146));
+    }
+
+    #[test]
+    fn get_tile_should_look_into_db() {
+        let base_grid = Grid {
+            id: 1,
+            revision: 1,
+            segment_id: 1,
+            position: Vec2i::new(42, 13),
+            heights: Vec::new(),
+            tiles: repeat(146).take((GRID_SIZE * GRID_SIZE) as usize).collect(),
+        };
+        let other_grid = Grid {
+            id: 2,
+            revision: 1,
+            segment_id: 1,
+            position: Vec2i::new(43, 13),
+            heights: Vec::new(),
+            tiles: repeat(147).take((GRID_SIZE * GRID_SIZE) as usize).collect(),
+        };
+        let base_grid_arc = Arc::new(Mutex::new(base_grid.clone()));
+        let other_grid_arc = Arc::new(Mutex::new(other_grid.clone()));
+        let mut map_db = FakeMapDb::default();
+        map_db.grids_by_id.insert(1, base_grid_arc.clone());
+        map_db.grids_by_segment_id_and_position.insert((base_grid.segment_id, base_grid.position), base_grid_arc);
+        map_db.grids_by_id.insert(2, other_grid_arc.clone());
+        map_db.grids_by_segment_id_and_position.insert((other_grid.segment_id, other_grid.position), other_grid_arc);
+        let mut map = Map::new(Arc::new(Mutex::new(map_db)));
+        map.add_grid(base_grid, Vec::new());
+        let tile_pos = grid_pos_to_tile_pos(Vec2i::new(43, 13));
+        assert_eq!(map.get_tile(1, tile_pos), Some(147));
+    }
+
+    #[test]
+    fn get_tile_should_adjust_db_grid_position() {
+        let base_grid = Grid {
+            id: 1,
+            revision: 1,
+            segment_id: 1,
+            position: Vec2i::new(42, 13),
+            heights: Vec::new(),
+            tiles: repeat(146).take((GRID_SIZE * GRID_SIZE) as usize).collect(),
+        };
+        let other_grid = Grid {
+            id: 2,
+            revision: 1,
+            segment_id: 1,
+            position: Vec2i::new(43, 13),
+            heights: Vec::new(),
+            tiles: repeat(147).take((GRID_SIZE * GRID_SIZE) as usize).collect(),
+        };
+        let shift = Vec2i::new(10, 5);
+        let mut db_base_grid = base_grid.clone();
+        db_base_grid.position -= shift;
+        let mut db_other_grid = other_grid.clone();
+        db_other_grid.position -= shift;
+        let db_base_grid_arc = Arc::new(Mutex::new(db_base_grid.clone()));
+        let db_other_grid_arc = Arc::new(Mutex::new(db_other_grid.clone()));
+        let mut map_db = FakeMapDb::default();
+        map_db.grids_by_id.insert(1, db_base_grid_arc.clone());
+        map_db.grids_by_segment_id_and_position.insert((db_base_grid.segment_id, db_base_grid.position), db_base_grid_arc);
+        map_db.grids_by_id.insert(2, db_other_grid_arc.clone());
+        map_db.grids_by_segment_id_and_position.insert((db_other_grid.segment_id, db_other_grid.position), db_other_grid_arc);
+        let mut map = Map::new(Arc::new(Mutex::new(map_db)));
+        map.add_grid(base_grid, Vec::new());
+        let tile_pos = grid_pos_to_tile_pos(Vec2i::new(43, 13));
+        assert_eq!(map.get_tile(1, tile_pos), Some(147));
+    }
+
+    #[test]
+    fn get_tile_should_not_deadlock_when_db_returns_same_grid() {
+        let grid = Grid {
+            id: 1,
+            revision: 1,
+            segment_id: 1,
+            position: Vec2i::new(42, 13),
+            heights: Vec::new(),
+            tiles: repeat(146).take((GRID_SIZE * GRID_SIZE) as usize).collect(),
+        };
+        let shift = Vec2i::new(10, 5);
+        let mut db_base_grid = grid.clone();
+        db_base_grid.position -= shift;
+        let db_base_grid_arc = Arc::new(Mutex::new(db_base_grid.clone()));
+        let mut map_db = FakeMapDb::default();
+        map_db.grids_by_id.insert(1, db_base_grid_arc.clone());
+        map_db.grids_by_segment_id_and_position.insert((db_base_grid.segment_id, db_base_grid.position), db_base_grid_arc.clone());
+        let map_db_arc = Arc::new(Mutex::new(map_db));
+        let mut map = Map::new(map_db_arc.clone());
+        map.add_grid(grid.clone(), Vec::new());
+        map_db_arc.lock().unwrap().grids_by_segment_id_and_position.remove(&(db_base_grid.segment_id, db_base_grid.position));
+        db_base_grid_arc.lock().unwrap().position = Vec2i::zero();
+        map_db_arc.lock().unwrap().grids_by_segment_id_and_position.insert((db_base_grid.segment_id, Vec2i::zero()), db_base_grid_arc.clone());
+        map_db_arc.lock().unwrap().grids_by_segment_id_and_position.insert((db_base_grid.segment_id, Vec2i::new(-42, -13)), db_base_grid_arc.clone());
+        let tile_pos = grid_pos_to_tile_pos(Vec2i::zero());
+        assert_eq!(map.get_tile(1, tile_pos), Some(146));
     }
 }
