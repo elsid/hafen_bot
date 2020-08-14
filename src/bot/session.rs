@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::bot::bot::Bot;
 use crate::bot::exp_wnd_closer::ExpWndCloser;
 use crate::bot::explorer::Explorer;
+use crate::bot::new_character::{NewCharacter, NewCharacterParams};
 use crate::bot::player::{Player, PlayerData};
 use crate::bot::protocol::{Message, Update};
 use crate::bot::world::{World, WorldData};
@@ -98,10 +99,16 @@ impl Session {
     }
 }
 
-fn make_bot(name: &str, _params: &[u8]) -> Result<Box<dyn Bot>, String> {
+fn make_bot(name: &str, params: &[u8]) -> Result<Box<dyn Bot>, String> {
     match name {
         "Explorer" => Ok(Box::new(Explorer::new())),
         "ExpWndCloser" => Ok(Box::new(ExpWndCloser::new())),
+        "NewCharacter" => {
+            match serde_json::from_slice::<NewCharacterParams>(params) {
+                Ok(parsed) => Ok(Box::new(NewCharacter::new(parsed))),
+                Err(e) => Err(format!("Failed to parse {} bot params: {}", name, e)),
+            }
+        }
         _ => Err(String::from("Bot is not found")),
     }
 }
