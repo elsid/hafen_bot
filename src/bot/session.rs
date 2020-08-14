@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::bot::bot::Bot;
+use crate::bot::exp_wnd_closer::ExpWndCloser;
 use crate::bot::explorer::Explorer;
 use crate::bot::player::{Player, PlayerData};
 use crate::bot::protocol::{Message, Update};
@@ -100,6 +101,7 @@ impl Session {
 fn make_bot(name: &str, _params: &[u8]) -> Result<Box<dyn Bot>, String> {
     match name {
         "Explorer" => Ok(Box::new(Explorer::new())),
+        "ExpWndCloser" => Ok(Box::new(ExpWndCloser::new())),
         _ => Err(String::from("Bot is not found")),
     }
 }
