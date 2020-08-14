@@ -266,3 +266,12 @@ impl AddAssign for Vec2i {
         };
     }
 }
+
+impl SubAssign for Vec2i {
+    fn sub_assign(&mut self, other: Self) {
+        *self = Self {
+            x: self.x - other.x,
+            y: self.y - other.y,
+        };
+    }
+}

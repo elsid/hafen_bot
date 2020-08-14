@@ -1,6 +1,6 @@
 use crate::bot::protocol::{Event, Message, Update};
-use crate::bot::tasks::task::Task;
 use crate::bot::scene::Scene;
+use crate::bot::tasks::task::Task;
 use crate::bot::world::PlayerWorld;
 
 pub struct ExpWndCloser {

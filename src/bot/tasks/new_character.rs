@@ -4,8 +4,8 @@ use serde::Deserialize;
 
 use crate::bot::map::{map_pos_to_pos, pos_to_map_pos};
 use crate::bot::protocol::{Button, Event, Message, Modifier, Update, Value};
-use crate::bot::tasks::task::Task;
 use crate::bot::scene::Scene;
+use crate::bot::tasks::task::Task;
 use crate::bot::vec2::Vec2i;
 use crate::bot::world::PlayerWorld;
 

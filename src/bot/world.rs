@@ -7,6 +7,7 @@ use graphics::rectangle::square;
 use serde::{Deserialize, Serialize};
 
 use crate::bot::map::{Grid, grid_pos_to_tile_pos, GridNeighbour, Map, MapData, pos_to_grid_pos, rel_tile_pos_to_pos, Tile, tile_pos_to_pos, TILE_SIZE, TileSet};
+use crate::bot::map_db::MapDb;
 use crate::bot::math::as_score;
 use crate::bot::objects::{Object, Objects, ObjectsData};
 use crate::bot::player::{Player, Widget};
@@ -28,19 +29,19 @@ pub struct World {
 }
 
 impl World {
-    pub fn new() -> Self {
+    pub fn new(map_db: Arc<Mutex<dyn MapDb + Send>>) -> Self {
         Self {
             revision: 0,
             objects: Objects::new(),
-            map: Map::new(),
+            map: Map::new(map_db),
         }
     }
 
-    pub fn from_world_data(data: WorldData) -> Self {
+    pub fn from_world_data(data: WorldData, map_db: Arc<Mutex<dyn MapDb + Send>>) -> Self {
         Self {
             revision: data.revision,
             objects: Objects::from_objects_data(data.objects),
-            map: Map::from_map_data(data.map),
+            map: Map::from_map_data(data.map, map_db),
         }
     }
 
@@ -235,6 +236,10 @@ impl<'a> PlayerWorld<'a> {
 
     pub fn objects_len(&self) -> usize {
         self.objects.len()
+    }
+
+    pub fn get_grid_by_id(&self, grid_id: i64) -> Option<&Grid> {
+        self.map.get_grid_by_id(grid_id)
     }
 
     pub fn find_border_tiles(&self, weights: &impl TileWeights) -> Vec<Vec2i> {

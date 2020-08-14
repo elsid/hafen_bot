@@ -3,9 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use crate::bot::map::{map_pos_to_tile_pos, pos_to_map_pos, pos_to_rel_tile_pos, pos_to_tile_pos, rel_tile_pos_to_pos, TILE_SIZE};
 use crate::bot::protocol::{Button, Event, Message, Modifier, Update, Value};
+use crate::bot::scene::{Layer, MapTransformArcNode, Node, Scene};
 use crate::bot::tasks::task::Task;
 use crate::bot::vec2::Vec2i;
-use crate::bot::scene::{Layer, MapTransformArcNode, Node, Scene};
 use crate::bot::world::{BTreeMapTileWeights, make_find_path_node, PlayerWorld};
 
 const WATER_TILES_COST: &'static [(&'static str, f64)] = &[
