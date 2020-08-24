@@ -11,7 +11,7 @@ use crate::bot::session::{Session, SessionData};
 
 #[derive(Clone)]
 struct State {
-    sessions: Arc<Mutex<HashMap<i64, Session>>>,
+    sessions: Arc<Mutex<HashMap<i64, Arc<Mutex<Session>>>>>,
 }
 
 pub fn run_server() -> std::io::Result<Server> {
@@ -59,33 +59,27 @@ async fn push(state: web::Data<State>, payload: web::Payload) -> Result<HttpResp
         }
     }
     let session_path = format!("sessions/{}.json", update.session);
-    let mut sessions = state.sessions.lock().unwrap();
     let session_id = update.session;
-    let session = sessions
-        .entry(session_id)
-        .or_insert_with(|| {
-            match SessionData::read_from_file(session_path.as_str()) {
-                Ok(v) => {
-                    info!("Use saved session: {}", session_id);
-                    Session::from_session_data(v)
-                }
-                Err(e) => {
-                    warn!("Failed to read session {}: {}", session_id, e);
-                    info!("Create new session: {}", session_id);
-                    Session::new(session_id)
-                }
-            }
-        });
-    if session.update(update) {
-        let new_path = format!("sessions/{}.new.json", session_id);
-        match session.as_session_data().write_to_file(new_path.as_str()) {
-            Ok(_) => match std::fs::rename(new_path, session_path) {
-                Ok(_) => debug!("Session is saved: {}", session_id),
-                Err(e) => error!("Failed to rename new session file {}: {}", session_id, e),
-            },
-            Err(e) => error!("Failed to write session {}: {}", session_id, e),
-        }
+    if let Some(session) = state.sessions.lock().unwrap().get(&session_id).map(Arc::clone) {
+        update_session(session_id, session, update);
+        return Ok(HttpResponse::Ok().json(&Message::Ok));
     }
+    let new_session = match SessionData::read_from_file(session_path.as_str()) {
+        Ok(v) => {
+            info!("Use saved session: {}", session_id);
+            Session::from_session_data(v)
+        }
+        Err(e) => {
+            warn!("Failed to read session {}: {}", session_id, e);
+            info!("Create new session: {}", session_id);
+            Session::new(session_id)
+        }
+    };
+    let session = state.sessions.lock().unwrap()
+        .entry(session_id)
+        .or_insert_with(|| Arc::new(Mutex::new(new_session)))
+        .clone();
+    update_session(session_id, session, update);
     Ok(HttpResponse::Ok().json(&Message::Ok))
 }
 
@@ -97,8 +91,9 @@ struct Poll {
 async fn poll(state: web::Data<State>, query: web::Query<Poll>) -> HttpResponse {
     HttpResponse::Ok().json(
         state.sessions.lock().unwrap()
-            .get_mut(&query.session)
-            .map(|session| session.get_next_message().unwrap_or(Message::Ok))
+            .get(&query.session)
+            .map(Arc::clone)
+            .map(|session| session.lock().unwrap().get_next_message().unwrap_or(Message::Ok))
             .unwrap_or_else(|| Message::Error { message: String::from("Session is not found") })
     )
 }
@@ -113,9 +108,10 @@ async fn add_bot(state: web::Data<State>, query: web::Query<AddBot>, payload: we
     let body = collect(payload).await?;
     Ok(HttpResponse::Ok().json(
         state.sessions.lock().unwrap()
-            .get_mut(&query.session)
+            .get(&query.session)
+            .map(Arc::clone)
             .map(|session| {
-                match session.add_bot(query.bot_name.as_str(), &body) {
+                match session.lock().unwrap().add_bot(query.bot_name.as_str(), &body) {
                     Ok(_) => Message::Ok,
                     Err(e) => Message::Error { message: e },
                 }
@@ -132,9 +128,10 @@ struct ClearBots {
 async fn clear_bots(state: web::Data<State>, query: web::Query<ClearBots>) -> HttpResponse {
     HttpResponse::Ok().json(
         state.sessions.lock().unwrap()
-            .get_mut(&query.session)
+            .get(&query.session)
+            .map(Arc::clone)
             .map(|session| {
-                session.clear_bots();
+                session.lock().unwrap().clear_bots();
                 Message::Ok
             })
             .unwrap_or_else(|| Message::Error { message: String::from("Session is not found") })
@@ -146,9 +143,9 @@ async fn sessions(state: web::Data<State>) -> HttpResponse {
         value: state.sessions.lock().unwrap().iter()
             .map(|(id, session)| SessionInfo {
                 id: *id,
-                bots: session.get_bots(),
+                bots: session.lock().unwrap().get_bots(),
             })
-            .collect(),
+            .collect()
     })
 }
 
@@ -159,4 +156,26 @@ async fn collect(mut payload: web::Payload) -> Result<web::BytesMut, Error> {
         body.extend_from_slice(&chunk);
     }
     Ok(body)
+}
+
+fn update_session(session_id: i64, session: Arc<Mutex<Session>>, update: Update) {
+    let session_data = {
+        let mut locked_session = session.lock().unwrap();
+        if locked_session.update(update) {
+            Some(locked_session.as_session_data())
+        } else {
+            None
+        }
+    };
+    let session_path = format!("sessions/{}.json", session_id);
+    let new_path = format!("sessions/{}.new.json", session_id);
+    if let Some(data) = session_data {
+        match data.write_to_file(new_path.as_str()) {
+            Ok(_) => match std::fs::rename(new_path, session_path) {
+                Ok(_) => debug!("Session is saved: {}", session_id),
+                Err(e) => error!("Failed to rename new session file {}: {}", session_id, e),
+            },
+            Err(e) => error!("Failed to write session {}: {}", session_id, e),
+        }
+    }
 }
