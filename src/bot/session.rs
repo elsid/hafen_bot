@@ -14,7 +14,13 @@ pub struct Session {
     last_update: i64,
     world: World,
     player: Player,
-    bots: Vec<Box<dyn Bot>>,
+    bots: Vec<BotWithParams>,
+}
+
+struct BotWithParams {
+    name: String,
+    params: Vec<u8>,
+    value: Box<dyn Bot>,
 }
 
 impl Session {
@@ -28,14 +34,24 @@ impl Session {
         }
     }
 
-    pub fn from_session_data(session_data: SessionData) -> Self {
-        Self {
+    pub fn from_session_data(session_data: SessionData) -> Result<Self, String> {
+        Ok(Self {
             id: session_data.id,
             last_update: 0,
             world: World::from_world_data(session_data.world),
             player: Player::from_player_data(session_data.player),
-            bots: Vec::new(),
-        }
+            bots: {
+                let mut bots = Vec::new();
+                for bot in session_data.bots.into_iter() {
+                    bots.push(BotWithParams {
+                        value: make_bot(bot.name.as_str(), bot.params.as_slice())?,
+                        name: bot.name,
+                        params: bot.params,
+                    });
+                }
+                bots
+            },
+        })
     }
 
     pub fn as_session_data(&self) -> SessionData {
@@ -44,15 +60,20 @@ impl Session {
             last_update: self.last_update,
             world: self.world.as_world_data(),
             player: self.player.as_player_data(),
+            bots: self.bots.iter().map(|v| BotParams { name: v.name.clone(), params: v.params.clone() }).collect(),
         }
     }
 
     pub fn get_bots(&self) -> Vec<String> {
-        self.bots.iter().map(|v| String::from(v.name())).collect()
+        self.bots.iter().map(|v| v.name.clone()).collect()
     }
 
     pub fn add_bot(&mut self, name: &str, params: &[u8]) -> Result<(), String> {
-        self.bots.push(make_bot(name, params)?);
+        self.bots.push(BotWithParams {
+            name: String::from(name),
+            params: Vec::from(params),
+            value: make_bot(name, params)?,
+        });
         Ok(())
     }
 
@@ -72,7 +93,7 @@ impl Session {
         debug!("Got new update for session {}: {:?}", self.id, update);
         if let Some(world) = self.world.for_player(&self.player) {
             for bot in self.bots.iter_mut() {
-                bot.update(&world, &update);
+                bot.value.update(&world, &update);
             }
         }
         let mut updated = false;
@@ -88,7 +109,7 @@ impl Session {
     pub fn get_next_message(&mut self) -> Option<Message> {
         if let Some(world) = self.world.for_player(&self.player) {
             for bot in self.bots.iter_mut() {
-                if let Some(v) = bot.get_next_message(&world) {
+                if let Some(v) = bot.value.get_next_message(&world) {
                     debug!("Next message for session {}: {:?}", self.id, v);
                     return Some(v);
                 }
@@ -123,6 +144,13 @@ pub struct SessionData {
     last_update: i64,
     world: WorldData,
     player: PlayerData,
+    bots: Vec<BotParams>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct BotParams {
+    name: String,
+    params: Vec<u8>,
 }
 
 impl SessionData {
