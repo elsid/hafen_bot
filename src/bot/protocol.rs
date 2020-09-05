@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::bot::map::GridNeighbour;
+use crate::bot::session::SessionData;
 use crate::bot::vec2::{Vec2f, Vec2i};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -68,6 +69,7 @@ pub enum Event {
         msg: String,
         args: Vec<Value>,
     },
+    Close,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialOrd, PartialEq)]
@@ -117,7 +119,7 @@ value_from_impl! { Vec<Value>, List }
 value_from_to_impl! { Button, i32, Int }
 value_from_to_impl! { Modifier, i32, Int }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(tag = "type")]
 pub enum Message {
     Ok,
@@ -134,6 +136,8 @@ pub enum Message {
         arguments: Vec<Value>,
     },
     Done { bot: String },
+    SessionData { value: SessionData },
+    GetSessionData,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialOrd, PartialEq)]
@@ -156,10 +160,12 @@ pub enum Modifier {
     Alt = 4,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct SessionInfo {
     pub id: i64,
     pub bots: Vec<String>,
+    pub updates: usize,
+    pub messages: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

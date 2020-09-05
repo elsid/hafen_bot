@@ -189,7 +189,7 @@ impl Player {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct PlayerData {
     map_view_id: Option<i32>,
     game_ui_id: Option<i32>,
@@ -201,14 +201,14 @@ pub struct PlayerData {
     map_grids: Vec<MapGrid>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Widget {
     pub id: i32,
     pub parent: i32,
     pub kind: String,
 }
 
-#[derive(Default, Serialize, Deserialize, Clone)]
+#[derive(Default, Serialize, Deserialize, Clone, Debug, PartialEq)]
 struct MapGrid {
     id: i64,
     position: Vec2i,

@@ -86,12 +86,12 @@ impl Objects {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct ObjectsData {
     objects: Vec<Object>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Object {
     pub id: i64,
     pub position: Vec2f,
