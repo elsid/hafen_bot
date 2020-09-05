@@ -5,6 +5,7 @@ use crate::bot::map::{pos_to_map_pos, pos_to_rel_tile_pos, pos_to_tile_pos, rel_
 use crate::bot::math::as_score;
 use crate::bot::protocol::{Button, Message, Modifier, Update, Value};
 use crate::bot::tasks::task::Task;
+use crate::bot::scene::Scene;
 use crate::bot::vec2::Vec2i;
 use crate::bot::world::{BTreeMapTileWeights, PlayerWorld};
 
@@ -35,7 +36,7 @@ impl Task for Explorer {
         "Explorer"
     }
 
-    fn get_next_message(&mut self, world: &PlayerWorld) -> Option<Message> {
+    fn get_next_message(&mut self, world: &PlayerWorld, _: &Scene) -> Option<Message> {
         let player_pos = world.player_position();
         let water_tiles_cost = WATER_TILES_COST.iter()
             .filter_map(|&(name, weight)| {

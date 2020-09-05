@@ -5,6 +5,7 @@ use serde::Deserialize;
 use crate::bot::map::{map_pos_to_pos, pos_to_map_pos};
 use crate::bot::protocol::{Button, Event, Message, Modifier, Update, Value};
 use crate::bot::tasks::task::Task;
+use crate::bot::scene::Scene;
 use crate::bot::vec2::Vec2i;
 use crate::bot::world::PlayerWorld;
 
@@ -56,7 +57,7 @@ impl Task for NewCharacter {
         "NewCharacter"
     }
 
-    fn get_next_message(&mut self, world: &PlayerWorld) -> Option<Message> {
+    fn get_next_message(&mut self, world: &PlayerWorld, _: &Scene) -> Option<Message> {
         if self.state == State::HasName {
             debug!("NewCharacter: has name");
             return None;

@@ -14,3 +14,5 @@ mod objects;
 mod stuck_detector;
 mod tasks;
 mod process;
+mod visualization;
+mod scene;

@@ -1,5 +1,6 @@
 use crate::bot::protocol::{Event, Message, Update};
 use crate::bot::tasks::task::Task;
+use crate::bot::scene::Scene;
 use crate::bot::world::PlayerWorld;
 
 pub struct ExpWndCloser {
@@ -21,7 +22,7 @@ impl Task for ExpWndCloser {
         "ExpWndCloser"
     }
 
-    fn get_next_message(&mut self, _: &PlayerWorld) -> Option<Message> {
+    fn get_next_message(&mut self, _: &PlayerWorld, _: &Scene) -> Option<Message> {
         if let Some(id) = self.exp_wnd_ids.iter().find(|v| self.closed.iter().find(|w| w == v).is_none()) {
             debug!("ExpWndCloser: close {}", id);
             self.closed.push(*id);

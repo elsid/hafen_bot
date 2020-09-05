@@ -10,6 +10,7 @@ use serde::Deserialize;
 use crate::bot::process::{count_updates, push_update, start_process_session, UpdatesQueue};
 use crate::bot::protocol::{Message, SessionInfo, Update};
 use crate::bot::session::{Session, SessionData};
+use crate::bot::visualization::start_visualize_session;
 
 #[derive(Clone)]
 struct State {
@@ -17,6 +18,7 @@ struct State {
     messages: Arc<Mutex<HashMap<i64, Arc<Mutex<VecDeque<Message>>>>>>,
     sessions: Arc<Mutex<HashMap<i64, Arc<RwLock<Session>>>>>,
     processors: Arc<Mutex<HashMap<i64, JoinHandle<()>>>>,
+    visualizers: Arc<Mutex<HashMap<i64, Vec<JoinHandle<()>>>>>,
 }
 
 pub fn run_server() -> std::io::Result<Server> {
@@ -27,6 +29,7 @@ pub fn run_server() -> std::io::Result<Server> {
         messages: Arc::new(Mutex::new(HashMap::new())),
         sessions: Arc::new(Mutex::new(HashMap::new())),
         processors: Arc::new(Mutex::new(HashMap::new())),
+        visualizers: Arc::new(Mutex::new(HashMap::new())),
     };
 
     Ok(HttpServer::new(move || {
@@ -41,6 +44,7 @@ pub fn run_server() -> std::io::Result<Server> {
             .service(web::resource("/sessions").route(web::get().to(sessions)))
             .service(web::resource("/set_session").route(web::get().to(set_session)))
             .service(web::resource("/get_session").route(web::get().to(get_session)))
+            .service(web::resource("/add_visualization").route(web::get().to(add_visualization)))
             .default_service(web::resource("").to(HttpResponse::NotFound))
     })
         .bind("127.0.0.1:8080")?
@@ -223,4 +227,37 @@ async fn collect(mut payload: web::Payload) -> Result<web::BytesMut, Error> {
         body.extend_from_slice(&chunk);
     }
     Ok(body)
+}
+
+#[derive(Deserialize)]
+struct AddVisualization {
+    session: i64,
+}
+
+async fn add_visualization(state: web::Data<State>, query: web::Query<AddVisualization>) -> HttpResponse {
+    let session_id = query.session;
+    HttpResponse::Ok().json(
+        &state.sessions.lock().unwrap()
+            .get(&session_id)
+            .map(Arc::clone)
+            .and_then(|session| {
+                state.updates.lock().unwrap().get(&session_id)
+                    .map(Arc::clone)
+                    .map(|v| (session, v))
+            })
+            .and_then(|(session, updates)| {
+                state.messages.lock().unwrap().get(&session_id)
+                    .map(Arc::clone)
+                    .map(|v| (session, updates, v))
+            })
+            .map(|(session, updates, messages)| {
+                let scene = session.read().unwrap().scene().clone();
+                state.visualizers.lock().unwrap()
+                    .entry(session_id)
+                    .or_insert_with(Vec::new)
+                    .push(start_visualize_session(session_id, session, scene, updates, messages));
+                Message::Ok
+            })
+            .unwrap_or_else(|| Message::Error { message: String::from("Session is not found") })
+    )
 }

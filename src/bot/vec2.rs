@@ -1,4 +1,4 @@
-use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub};
+use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
 
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +14,16 @@ impl Vec2f {
     #[inline(always)]
     pub const fn new(x: f64, y: f64) -> Self {
         Self { x, y }
+    }
+
+    #[inline(always)]
+    pub const fn zero() -> Self {
+        Self { x: 0.0, y: 0.0 }
+    }
+
+    #[inline(always)]
+    pub const fn only_y(y: f64) -> Self {
+        Self { x: 0.0, y }
     }
 
     #[inline(always)]
@@ -129,6 +139,24 @@ impl PartialEq for Vec2f {
 }
 
 impl Eq for Vec2f {}
+
+impl AddAssign for Vec2f {
+    fn add_assign(&mut self, other: Self) {
+        *self = Self {
+            x: self.x + other.x,
+            y: self.y + other.y,
+        };
+    }
+}
+
+impl SubAssign for Vec2f {
+    fn sub_assign(&mut self, other: Self) {
+        *self = Self {
+            x: self.x - other.x,
+            y: self.y - other.y,
+        };
+    }
+}
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Vec2i {

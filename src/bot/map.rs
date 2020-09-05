@@ -117,6 +117,14 @@ impl Map {
         self.tiles_by_name.get(name).map(|v| *v)
     }
 
+    pub fn get_tile_by_id(&self, id: i32) -> Option<&Tile> {
+        self.tiles.get(&id)
+    }
+
+    pub fn iter_grids(&self) -> impl Iterator<Item=&Grid> {
+        self.grids.values()
+    }
+
     pub fn find_border_tiles(&self, segment_id: i64, allowed_tiles: &impl TileSet) -> Vec<Vec2i> {
         let mut result = Vec::new();
         if let Some(segment_grids) = self.grids_by_coord.get(&segment_id) {
@@ -196,6 +204,10 @@ pub fn pos_to_grid_pos(pos: Vec2f) -> Vec2i {
     tile_pos_to_grid_pos(pos_to_tile_pos(pos))
 }
 
+pub fn grid_pos_to_pos(grid_pos: Vec2i) -> Vec2f {
+    tile_pos_to_pos(grid_pos_to_tile_pos(grid_pos))
+}
+
 fn tile_pos_to_relative_tile_pos(tile_pos: Vec2i, grid_pos: Vec2i) -> Vec2i {
     tile_pos - grid_pos_to_tile_pos(grid_pos)
 }
@@ -206,6 +218,10 @@ pub fn grid_pos_to_tile_pos(grid_pos: Vec2i) -> Vec2i {
 
 fn get_grid_tile_index(tile_pos: Vec2i) -> usize {
     tile_pos.x() as usize + tile_pos.y() as usize * GRID_SIZE as usize
+}
+
+pub fn tile_index_to_tile_pos(index: usize) -> Vec2i {
+    Vec2i::new((index % GRID_SIZE as usize) as i32, (index / GRID_SIZE as usize) as i32)
 }
 
 pub fn make_tile_pos(grid_pos: Vec2i, relative_tile_pos: Vec2i) -> Vec2i {
