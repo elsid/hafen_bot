@@ -13,6 +13,7 @@ use crate::bot::walk_grid::walk_grid;
 const REPORT_ITERATIONS: usize = 1_000_000;
 
 pub struct World {
+    revision: u64,
     objects: Objects,
     map: Map,
 }
@@ -20,6 +21,7 @@ pub struct World {
 impl World {
     pub fn new() -> Self {
         Self {
+            revision: 0,
             objects: Objects::new(),
             map: Map::new(),
         }
@@ -27,6 +29,7 @@ impl World {
 
     pub fn from_world_data(data: WorldData) -> Self {
         Self {
+            revision: data.revision,
             objects: Objects::from_objects_data(data.objects),
             map: Map::from_map_data(data.map),
         }
@@ -34,6 +37,7 @@ impl World {
 
     pub fn as_world_data(&self) -> WorldData {
         WorldData {
+            revision: self.revision,
             objects: self.objects.as_objects_data(),
             map: self.map.as_map_data(),
         }
@@ -66,6 +70,7 @@ impl World {
                         })
                         .map(|(player_segment_id, player_grid_offset)| {
                             PlayerWorld {
+                                revision: self.revision,
                                 map_view_id,
                                 game_ui_id,
                                 player_name,
@@ -87,6 +92,15 @@ impl World {
     }
 
     pub fn update(&mut self, update: Update) -> bool {
+        if self.apply_update(update) {
+            self.revision += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn apply_update(&mut self, update: Update) -> bool {
         match update.event {
             Event::MapTile { id, version, name, color } => {
                 self.map.set_tile(Tile { id, version, name, color });
@@ -140,6 +154,7 @@ impl World {
 }
 
 pub struct PlayerWorld<'a> {
+    revision: u64,
     map_view_id: i32,
     game_ui_id: i32,
     player_name: &'a String,
@@ -155,6 +170,10 @@ pub struct PlayerWorld<'a> {
 }
 
 impl<'a> PlayerWorld<'a> {
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     pub fn map_view_id(&self) -> i32 {
         self.map_view_id
     }
@@ -165,6 +184,14 @@ impl<'a> PlayerWorld<'a> {
 
     pub fn player_position(&self) -> Vec2f {
         self.player_position
+    }
+
+    pub fn player_segment_id(&self) -> i64 {
+        self.player_segment_id
+    }
+
+    pub fn player_grid_id(&self) -> i64 {
+        self.player_grid_id
     }
 
     pub fn is_player_stuck(&self) -> bool {
@@ -179,11 +206,27 @@ impl<'a> PlayerWorld<'a> {
         self.map.get_tile_id_by_name(name)
     }
 
+    pub fn get_tile_by_id(&self, id: i32) -> Option<&Tile> {
+        self.map.get_tile_by_id(id)
+    }
+
     pub fn get_tile(&self, tile_pos: Vec2i) -> Option<i32> {
         self.map.get_tile(
             self.player_segment_id,
             tile_pos + grid_pos_to_tile_pos(self.player_grid_offset),
         )
+    }
+
+    pub fn iter_grids(&self) -> impl Iterator<Item=&Grid> {
+        self.map.iter_grids()
+    }
+
+    pub fn iter_objects(&self) -> impl Iterator<Item=&Object> {
+        self.objects.iter()
+    }
+
+    pub fn objects_len(&self) -> usize {
+        self.objects.len()
     }
 
     pub fn find_border_tiles(&self, weights: &impl TileWeights) -> Vec<Vec2i> {
@@ -420,6 +463,7 @@ impl<'a> PlayerWorld<'a> {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct WorldData {
+    revision: u64,
     objects: ObjectsData,
     map: MapData,
 }

@@ -18,3 +18,5 @@ mod exp_wnd_closer;
 mod new_character;
 mod path_finder;
 mod process;
+mod visualization;
+mod scene;

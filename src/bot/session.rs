@@ -9,7 +9,8 @@ use crate::bot::new_character::{NewCharacter, NewCharacterParams};
 use crate::bot::path_finder::PathFinder;
 use crate::bot::player::{Player, PlayerData};
 use crate::bot::protocol::{Message, Update};
-use crate::bot::world::{World, WorldData};
+use crate::bot::scene::Scene;
+use crate::bot::world::{PlayerWorld, World, WorldData};
 
 pub struct Session {
     id: i64,
@@ -17,6 +18,7 @@ pub struct Session {
     world: World,
     player: Player,
     bots: Arc<RwLock<Vec<Arc<RwLock<BotWithParams>>>>>,
+    scene: Scene,
 }
 
 struct BotWithParams {
@@ -33,6 +35,7 @@ impl Session {
             world: World::new(),
             player: Player::default(),
             bots: Arc::new(RwLock::new(Vec::new())),
+            scene: Scene::new(),
         }
     }
 
@@ -53,6 +56,7 @@ impl Session {
                 }
                 Arc::new(RwLock::new(bots))
             },
+            scene: Scene::new(),
         })
     }
 
@@ -76,6 +80,10 @@ impl Session {
         self.bots.read().unwrap().iter()
             .map(|v| v.read().unwrap().name.clone())
             .collect()
+    }
+
+    pub fn scene(&self) -> &Scene {
+        &self.scene
     }
 
     pub fn add_bot(&mut self, name: &str, params: &[u8]) -> Result<(), String> {
@@ -119,7 +127,7 @@ impl Session {
     pub fn get_next_message(&self) -> Option<Message> {
         if let Some(world) = self.world.for_player(&self.player) {
             for bot in self.bots.read().unwrap().iter().map(Arc::clone) {
-                if let Some(v) = bot.read().unwrap().value.lock().unwrap().get_next_message(&world) {
+                if let Some(v) = bot.read().unwrap().value.lock().unwrap().get_next_message(&world, &self.scene) {
                     debug!("Next message for session {}: {:?}", self.id, v);
                     return Some(v);
                 }
@@ -130,6 +138,10 @@ impl Session {
             debug!("World is not configured for session {}", self.id);
             None
         }
+    }
+
+    pub fn get_player_world(&self) -> Option<PlayerWorld> {
+        self.world.for_player(&self.player)
     }
 }
 
