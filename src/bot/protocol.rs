@@ -68,9 +68,10 @@ pub enum Event {
         msg: String,
         args: Vec<Value>,
     },
+    Close,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(tag = "type")]
 pub enum Value {
     Nil,
@@ -117,7 +118,7 @@ value_from_impl! { Vec<Value>, List }
 value_from_to_impl! { Button, i32, Int }
 value_from_to_impl! { Modifier, i32, Int }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(tag = "type")]
 pub enum Message {
     Ok,
@@ -135,7 +136,7 @@ pub enum Message {
     },
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct Color {
     pub r: i32,
     pub g: i32,
@@ -155,10 +156,12 @@ pub enum Modifier {
     Shift = 4,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct SessionInfo {
     pub id: i64,
     pub bots: Vec<String>,
+    pub updates: usize,
+    pub messages: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
