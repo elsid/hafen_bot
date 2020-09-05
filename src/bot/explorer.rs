@@ -6,6 +6,7 @@ use crate::bot::common::as_score;
 use crate::bot::map::{pos_to_map_pos, pos_to_rel_tile_pos, pos_to_tile_pos, rel_tile_pos_to_pos, tile_pos_to_pos, TILE_SIZE};
 use crate::bot::protocol::{Button, Message, Modifier, Update, Value};
 use crate::bot::vec2::Vec2i;
+use crate::bot::visualization::Scene;
 use crate::bot::world::{PlayerWorld, TileWeights};
 
 const WATER_TILES_COST: &'static [(&'static str, f64)] = &[
@@ -35,7 +36,7 @@ impl Bot for Explorer {
         "Explorer"
     }
 
-    fn get_next_message(&mut self, world: &PlayerWorld) -> Option<Message> {
+    fn get_next_message(&mut self, world: &PlayerWorld, _: &Scene) -> Option<Message> {
         let player_pos = world.player_position();
         let player_tile = world.get_tile(pos_to_tile_pos(player_pos));
         let water_tiles_cost = WATER_TILES_COST.iter()

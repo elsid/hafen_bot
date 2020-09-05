@@ -84,6 +84,10 @@ impl Objects {
         }
         false
     }
+
+    pub fn iter(&self) -> impl Iterator<Item=&Object> {
+        self.objects.values().filter_map(|v| v.back())
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]

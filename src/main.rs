@@ -19,6 +19,7 @@ use crate::bot::{
     SessionData,
     SessionInfo,
     start_process_session,
+    start_visualize_session,
     Update,
     UpdatesQueue,
 };
@@ -31,6 +32,7 @@ struct State {
     messages: Arc<Mutex<HashMap<i64, Arc<Mutex<VecDeque<Message>>>>>>,
     sessions: Arc<Mutex<HashMap<i64, Arc<RwLock<Session>>>>>,
     processors: Arc<Mutex<HashMap<i64, JoinHandle<()>>>>,
+    visualizers: Arc<Mutex<HashMap<i64, Vec<JoinHandle<()>>>>>,
 }
 
 #[actix_rt::main]
@@ -44,6 +46,7 @@ async fn main() -> std::io::Result<()> {
         messages: Arc::new(Mutex::new(HashMap::new())),
         sessions: Arc::new(Mutex::new(HashMap::new())),
         processors: Arc::new(Mutex::new(HashMap::new())),
+        visualizers: Arc::new(Mutex::new(HashMap::new())),
     };
 
     HttpServer::new(move || {
@@ -56,6 +59,7 @@ async fn main() -> std::io::Result<()> {
             .service(web::resource("/add_bot").route(web::post().to(add_bot)))
             .service(web::resource("/clear_bots").route(web::get().to(clear_bots)))
             .service(web::resource("/sessions").route(web::get().to(sessions)))
+            .service(web::resource("/add_visualization").route(web::get().to(add_visualization)))
             .default_service(web::resource("").to(HttpResponse::NotFound))
     })
         .bind("127.0.0.1:8080")?
@@ -114,9 +118,10 @@ async fn push(state: web::Data<State>, payload: web::Payload) -> Result<HttpResp
         .entry(session_id)
         .or_insert_with(|| Arc::new(Mutex::new(VecDeque::new())))
         .clone();
+    let processor_session = Arc::clone(&session);
     state.processors.lock().unwrap()
         .entry(session_id)
-        .or_insert_with(|| start_process_session(session_id, session, updates, messages));
+        .or_insert_with(|| start_process_session(session_id, processor_session, updates, messages));
     Ok(HttpResponse::Ok().json(&Message::Ok))
 }
 
@@ -208,4 +213,27 @@ async fn collect(mut payload: web::Payload) -> Result<web::BytesMut, Error> {
         body.extend_from_slice(&chunk);
     }
     Ok(body)
+}
+
+#[derive(Deserialize)]
+struct AddVisualization {
+    session: i64,
+}
+
+async fn add_visualization(state: web::Data<State>, query: web::Query<AddVisualization>) -> HttpResponse {
+    let session_id = query.session;
+    HttpResponse::Ok().json(
+        &state.sessions.lock().unwrap()
+            .get(&session_id)
+            .map(Arc::clone)
+            .map(|session| {
+                let scene = session.read().unwrap().scene().clone();
+                state.visualizers.lock().unwrap()
+                    .entry(session_id)
+                    .or_insert_with(Vec::new)
+                    .push(start_visualize_session(session_id, session, scene));
+                Message::Ok
+            })
+            .unwrap_or_else(|| Message::Error { message: String::from("Session is not found") })
+    )
 }

@@ -6,6 +6,7 @@ use crate::bot::bot::Bot;
 use crate::bot::map::{map_pos_to_pos, pos_to_map_pos};
 use crate::bot::protocol::{Button, Event, Message, Modifier, Update, Value};
 use crate::bot::vec2::Vec2i;
+use crate::bot::visualization::Scene;
 use crate::bot::world::PlayerWorld;
 
 const MAX_DISTANCE: f64 = 1.0;
@@ -56,7 +57,7 @@ impl Bot for NewCharacter {
         "NewCharacter"
     }
 
-    fn get_next_message(&mut self, world: &PlayerWorld) -> Option<Message> {
+    fn get_next_message(&mut self, world: &PlayerWorld, _: &Scene) -> Option<Message> {
         if self.state == State::HasName {
             info!("NewCharacter: has name");
             return None;

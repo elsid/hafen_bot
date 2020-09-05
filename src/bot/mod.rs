@@ -2,6 +2,7 @@ pub use self::bot::Bot;
 pub use self::process::{count_updates, push_update, start_process_session, UpdatesQueue};
 pub use self::protocol::{Message, SessionInfo, Update};
 pub use self::session::{Session, SessionData};
+pub use self::visualization::start_visualize_session;
 pub use self::world::World;
 
 mod session;
@@ -20,3 +21,4 @@ mod explorer;
 mod exp_wnd_closer;
 mod new_character;
 mod process;
+mod visualization;
