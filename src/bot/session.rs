@@ -14,7 +14,13 @@ pub struct Session {
     last_update: i64,
     world: World,
     player: Player,
-    tasks: Vec<Box<dyn Task>>,
+    tasks: Vec<TaskWithParams>,
+}
+
+struct TaskWithParams {
+    name: String,
+    params: Vec<u8>,
+    value: Box<dyn Task>,
 }
 
 impl Session {
@@ -28,14 +34,24 @@ impl Session {
         }
     }
 
-    pub fn from_session_data(session_data: SessionData) -> Self {
-        Self {
+    pub fn from_session_data(session_data: SessionData) -> Result<Self, String> {
+        Ok(Self {
             id: session_data.id,
             last_update: 0,
             world: World::from_world_data(session_data.world),
             player: Player::from_player_data(session_data.player),
-            tasks: Vec::new(),
-        }
+            tasks: {
+                let mut tasks = Vec::new();
+                for task in session_data.tasks.into_iter() {
+                    tasks.push(TaskWithParams {
+                        value: make_task(task.name.as_str(), task.params.as_slice())?,
+                        name: task.name,
+                        params: task.params,
+                    });
+                }
+                tasks
+            },
+        })
     }
 
     pub fn as_session_data(&self) -> SessionData {
@@ -44,15 +60,20 @@ impl Session {
             last_update: self.last_update,
             world: self.world.as_world_data(),
             player: self.player.as_player_data(),
+            tasks: self.tasks.iter().map(|v| BotParams { name: v.name.clone(), params: v.params.clone() }).collect(),
         }
     }
 
     pub fn get_tasks(&self) -> Vec<String> {
-        self.tasks.iter().map(|v| String::from(v.name())).collect()
+        self.tasks.iter().map(|v| v.name.clone()).collect()
     }
 
     pub fn add_task(&mut self, name: &str, params: &[u8]) -> Result<(), String> {
-        self.tasks.push(make_task(name, params)?);
+        self.tasks.push(TaskWithParams {
+            name: String::from(name),
+            params: Vec::from(params),
+            value: make_task(name, params)?,
+        });
         Ok(())
     }
 
@@ -72,7 +93,7 @@ impl Session {
         debug!("Got new update for session {}: {:?}", self.id, update);
         if let Some(world) = self.world.for_player(&self.player) {
             for task in self.tasks.iter_mut() {
-                task.update(&world, &update);
+                task.value.update(&world, &update);
             }
         }
         let mut updated = false;
@@ -89,7 +110,7 @@ impl Session {
         if let Some(world) = self.world.for_player(&self.player) {
             let mut message = None;
             for task in self.tasks.iter_mut() {
-                if let Some(v) = task.get_next_message(&world) {
+                if let Some(v) = task.value.get_next_message(&world) {
                     if !matches!(v, Message::Done { .. }) {
                         message = Some(v);
                         break;
@@ -127,6 +148,13 @@ pub struct SessionData {
     last_update: i64,
     world: WorldData,
     player: PlayerData,
+    tasks: Vec<BotParams>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct BotParams {
+    name: String,
+    params: Vec<u8>,
 }
 
 impl SessionData {

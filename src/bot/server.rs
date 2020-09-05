@@ -66,8 +66,17 @@ async fn push(state: web::Data<State>, payload: web::Payload) -> Result<HttpResp
     }
     let new_session = match SessionData::read_from_file(session_path.as_str()) {
         Ok(v) => {
-            info!("Use saved session: {}", session_id);
-            Session::from_session_data(v)
+            match Session::from_session_data(v) {
+                Ok(v) => {
+                    info!("Use saved session: {}", session_id);
+                    v
+                }
+                Err(e) => {
+                    warn!("Failed to use saved session {}: {}", session_id, e);
+                    info!("Create new session: {}", session_id);
+                    Session::new(session_id)
+                }
+            }
         }
         Err(e) => {
             warn!("Failed to read session {}: {}", session_id, e);
