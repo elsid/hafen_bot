@@ -1,24 +1,32 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex, RwLock};
+use std::thread::JoinHandle;
 
 use actix_web::{Error, HttpResponse, web};
 use actix_web::dev::Server;
 use futures::StreamExt;
 use serde::Deserialize;
 
+use crate::bot::process::{count_updates, push_update, start_process_session, UpdatesQueue};
 use crate::bot::protocol::{Message, SessionInfo, Update};
 use crate::bot::session::{Session, SessionData};
 
 #[derive(Clone)]
 struct State {
-    sessions: Arc<Mutex<HashMap<i64, Arc<Mutex<Session>>>>>,
+    updates: Arc<Mutex<HashMap<i64, Arc<UpdatesQueue>>>>,
+    messages: Arc<Mutex<HashMap<i64, Arc<Mutex<VecDeque<Message>>>>>>,
+    sessions: Arc<Mutex<HashMap<i64, Arc<RwLock<Session>>>>>,
+    processors: Arc<Mutex<HashMap<i64, JoinHandle<()>>>>,
 }
 
 pub fn run_server() -> std::io::Result<Server> {
     use actix_web::{middleware, App, HttpServer};
 
     let state = State {
+        updates: Arc::new(Mutex::new(HashMap::new())),
+        messages: Arc::new(Mutex::new(HashMap::new())),
         sessions: Arc::new(Mutex::new(HashMap::new())),
+        processors: Arc::new(Mutex::new(HashMap::new())),
     };
 
     Ok(HttpServer::new(move || {
@@ -31,6 +39,8 @@ pub fn run_server() -> std::io::Result<Server> {
             .service(web::resource("/add_task").route(web::post().to(add_task)))
             .service(web::resource("/clear_tasks").route(web::get().to(clear_tasks)))
             .service(web::resource("/sessions").route(web::get().to(sessions)))
+            .service(web::resource("/set_session").route(web::get().to(set_session)))
+            .service(web::resource("/get_session").route(web::get().to(get_session)))
             .default_service(web::resource("").to(HttpResponse::NotFound))
     })
         .bind("127.0.0.1:8080")?
@@ -40,7 +50,6 @@ pub fn run_server() -> std::io::Result<Server> {
 async fn ping() -> HttpResponse {
     HttpResponse::Ok().json(&Message::Ok)
 }
-
 
 async fn push(state: web::Data<State>, payload: web::Payload) -> Result<HttpResponse, Error> {
     let body = collect(payload).await?;
@@ -58,37 +67,29 @@ async fn push(state: web::Data<State>, payload: web::Payload) -> Result<HttpResp
             return Ok(HttpResponse::Ok().json(&Message::Error { message: String::from("Failed create sessions directory") }));
         }
     }
-    let session_path = format!("sessions/{}.json", update.session);
     let session_id = update.session;
-    if let Some(session) = state.sessions.lock().unwrap().get(&session_id).map(Arc::clone) {
-        update_session(session_id, session, update);
+    if let Some(updates) = state.updates.lock().unwrap().get(&session_id).map(Arc::clone) {
+        push_update(&updates, update);
         return Ok(HttpResponse::Ok().json(&Message::Ok));
     }
-    let new_session = match SessionData::read_from_file(session_path.as_str()) {
-        Ok(v) => {
-            match Session::from_session_data(v) {
-                Ok(v) => {
-                    info!("Use saved session: {}", session_id);
-                    v
-                }
-                Err(e) => {
-                    warn!("Failed to use saved session {}: {}", session_id, e);
-                    info!("Create new session: {}", session_id);
-                    Session::new(session_id)
-                }
-            }
-        }
-        Err(e) => {
-            warn!("Failed to read session {}: {}", session_id, e);
-            info!("Create new session: {}", session_id);
-            Session::new(session_id)
-        }
-    };
+    info!("Create new session: {}", session_id);
+    let new_session = Session::new(session_id);
     let session = state.sessions.lock().unwrap()
         .entry(session_id)
-        .or_insert_with(|| Arc::new(Mutex::new(new_session)))
+        .or_insert_with(|| Arc::new(RwLock::new(new_session)))
         .clone();
-    update_session(session_id, session, update);
+    let updates = state.updates.lock().unwrap()
+        .entry(session_id)
+        .or_insert_with(|| Arc::new(UpdatesQueue::new()))
+        .clone();
+    let messages = state.messages.lock().unwrap()
+        .entry(session_id)
+        .or_insert_with(|| Arc::new(Mutex::new(VecDeque::new())))
+        .clone();
+    push_update(&updates, update);
+    state.processors.lock().unwrap()
+        .entry(session_id)
+        .or_insert_with(|| start_process_session(session_id, session, updates, messages));
     Ok(HttpResponse::Ok().json(&Message::Ok))
 }
 
@@ -99,10 +100,10 @@ struct Poll {
 
 async fn poll(state: web::Data<State>, query: web::Query<Poll>) -> HttpResponse {
     HttpResponse::Ok().json(
-        state.sessions.lock().unwrap()
+        state.messages.lock().unwrap()
             .get(&query.session)
             .map(Arc::clone)
-            .map(|session| session.lock().unwrap().get_next_message().unwrap_or(Message::Ok))
+            .map(|messages| messages.lock().unwrap().pop_front().unwrap_or(Message::Ok))
             .unwrap_or_else(|| Message::Error { message: String::from("Session is not found") })
     )
 }
@@ -120,7 +121,7 @@ async fn add_task(state: web::Data<State>, query: web::Query<AddTask>, payload: 
             .get(&query.session)
             .map(Arc::clone)
             .map(|session| {
-                match session.lock().unwrap().add_task(query.name.as_str(), &body) {
+                match session.write().unwrap().add_task(query.name.as_str(), &body) {
                     Ok(_) => Message::Ok,
                     Err(e) => Message::Error { message: e },
                 }
@@ -140,7 +141,7 @@ async fn clear_tasks(state: web::Data<State>, query: web::Query<ClearTasks>) -> 
             .get(&query.session)
             .map(Arc::clone)
             .map(|session| {
-                session.lock().unwrap().clear_tasks();
+                session.write().unwrap().clear_tasks();
                 Message::Ok
             })
             .unwrap_or_else(|| Message::Error { message: String::from("Session is not found") })
@@ -148,14 +149,71 @@ async fn clear_tasks(state: web::Data<State>, query: web::Query<ClearTasks>) -> 
 }
 
 async fn sessions(state: web::Data<State>) -> HttpResponse {
+    let session_ids = state.sessions.lock().unwrap().keys().cloned().collect::<Vec<_>>();
     HttpResponse::Ok().json(&Message::Sessions {
-        value: state.sessions.lock().unwrap().iter()
-            .map(|(id, session)| SessionInfo {
-                id: *id,
-                tasks: session.lock().unwrap().get_tasks(),
+        value: session_ids.iter()
+            .map(|session_id| SessionInfo {
+                id: *session_id,
+                tasks: state.sessions.lock().unwrap()
+                    .get(session_id)
+                    .map(Arc::clone)
+                    .map(|session| session.read().unwrap().get_tasks())
+                    .unwrap_or_else(Vec::new),
+                updates: state.updates.lock().unwrap()
+                    .get(session_id)
+                    .map(Arc::clone)
+                    .map(|updates| count_updates(&updates))
+                    .unwrap_or(0),
+                messages: state.messages.lock().unwrap()
+                    .get(session_id)
+                    .map(Arc::clone)
+                    .map(|messages| messages.lock().unwrap().len())
+                    .unwrap_or(0),
             })
             .collect()
     })
+}
+
+#[derive(Deserialize)]
+struct SetSession {
+    session: i64,
+}
+
+async fn set_session(state: web::Data<State>, query: web::Query<SetSession>, payload: web::Payload) -> Result<HttpResponse, Error> {
+    let body = collect(payload).await?;
+    let session_data = match serde_json::from_slice::<SessionData>(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            error!("Failed to parse session data {}: {}", std::str::from_utf8(&body).unwrap(), e);
+            return Ok(HttpResponse::Ok().json(&Message::Error { message: String::from("Failed to parse session data") }));
+        }
+    };
+    let session = match Session::from_session_data(session_data) {
+        Ok(v) => v,
+        Err(e) => {
+            error!("Failed to create session from data: {}", e);
+            return Ok(HttpResponse::Ok().json(&Message::Error { message: String::from("Failed to create session from data") }));
+        }
+    };
+    state.sessions.lock().unwrap().insert(query.session, Arc::new(RwLock::new(session)));
+    Ok(HttpResponse::Ok().json(Message::Ok))
+}
+
+#[derive(Deserialize)]
+struct GetSession {
+    session: i64,
+}
+
+async fn get_session(state: web::Data<State>, query: web::Query<GetSession>) -> HttpResponse {
+    HttpResponse::Ok().json(
+        state.sessions.lock().unwrap()
+            .get(&query.session)
+            .map(Arc::clone)
+            .map(|session| Message::SessionData {
+                value: session.read().unwrap().as_session_data(),
+            })
+            .unwrap_or_else(|| Message::Error { message: String::from("Session is not found") })
+    )
 }
 
 async fn collect(mut payload: web::Payload) -> Result<web::BytesMut, Error> {
@@ -165,26 +223,4 @@ async fn collect(mut payload: web::Payload) -> Result<web::BytesMut, Error> {
         body.extend_from_slice(&chunk);
     }
     Ok(body)
-}
-
-fn update_session(session_id: i64, session: Arc<Mutex<Session>>, update: Update) {
-    let session_data = {
-        let mut locked_session = session.lock().unwrap();
-        if locked_session.update(update) {
-            Some(locked_session.as_session_data())
-        } else {
-            None
-        }
-    };
-    let session_path = format!("sessions/{}.json", session_id);
-    let new_path = format!("sessions/{}.new.json", session_id);
-    if let Some(data) = session_data {
-        match data.write_to_file(new_path.as_str()) {
-            Ok(_) => match std::fs::rename(new_path, session_path) {
-                Ok(_) => debug!("Session is saved: {}", session_id),
-                Err(e) => error!("Failed to rename new session file {}: {}", session_id, e),
-            },
-            Err(e) => error!("Failed to write session {}: {}", session_id, e),
-        }
-    }
 }

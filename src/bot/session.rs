@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex, RwLock};
+
 use serde::{Deserialize, Serialize};
 
 use crate::bot::player::{Player, PlayerData};
@@ -14,13 +16,13 @@ pub struct Session {
     last_update: i64,
     world: World,
     player: Player,
-    tasks: Vec<TaskWithParams>,
+    tasks: Arc<RwLock<Vec<Arc<RwLock<TaskWithParams>>>>>,
 }
 
 struct TaskWithParams {
     name: String,
     params: Vec<u8>,
-    value: Box<dyn Task>,
+    value: Arc<Mutex<dyn Task>>,
 }
 
 impl Session {
@@ -30,7 +32,7 @@ impl Session {
             last_update: 0,
             world: World::new(),
             player: Player::default(),
-            tasks: Vec::new(),
+            tasks: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -43,13 +45,13 @@ impl Session {
             tasks: {
                 let mut tasks = Vec::new();
                 for task in session_data.tasks.into_iter() {
-                    tasks.push(TaskWithParams {
+                    tasks.push(Arc::new(RwLock::new(TaskWithParams {
                         value: make_task(task.name.as_str(), task.params.as_slice())?,
                         name: task.name,
                         params: task.params,
-                    });
+                    })));
                 }
-                tasks
+                Arc::new(RwLock::new(tasks))
             },
         })
     }
@@ -60,25 +62,33 @@ impl Session {
             last_update: self.last_update,
             world: self.world.as_world_data(),
             player: self.player.as_player_data(),
-            tasks: self.tasks.iter().map(|v| BotParams { name: v.name.clone(), params: v.params.clone() }).collect(),
+            tasks: self.tasks.read().unwrap().iter()
+                .map(Arc::clone)
+                .map(|v| {
+                    let locked = v.read().unwrap();
+                    BotParams { name: locked.name.clone(), params: locked.params.clone() }
+                })
+                .collect(),
         }
     }
 
     pub fn get_tasks(&self) -> Vec<String> {
-        self.tasks.iter().map(|v| v.name.clone()).collect()
+        self.tasks.read().unwrap().iter()
+            .map(|v| v.read().unwrap().name.clone())
+            .collect()
     }
 
     pub fn add_task(&mut self, name: &str, params: &[u8]) -> Result<(), String> {
-        self.tasks.push(TaskWithParams {
+        self.tasks.write().unwrap().push(Arc::new(RwLock::new(TaskWithParams {
             name: String::from(name),
             params: Vec::from(params),
             value: make_task(name, params)?,
-        });
+        })));
         Ok(())
     }
 
-    pub fn clear_tasks(&mut self) {
-        self.tasks.clear();
+    pub fn clear_tasks(&self) {
+        self.tasks.write().unwrap().clear();
     }
 
     pub fn update(&mut self, update: Update) -> bool {
@@ -92,8 +102,8 @@ impl Session {
         self.last_update = update.number;
         debug!("Got new update for session {}: {:?}", self.id, update);
         if let Some(world) = self.world.for_player(&self.player) {
-            for task in self.tasks.iter_mut() {
-                task.value.update(&world, &update);
+            for task in self.tasks.read().unwrap().iter().map(Arc::clone) {
+                task.read().unwrap().value.lock().unwrap().update(&world, &update);
             }
         }
         let mut updated = false;
@@ -106,11 +116,11 @@ impl Session {
         updated
     }
 
-    pub fn get_next_message(&mut self) -> Option<Message> {
+    pub fn get_next_message(&self) -> Option<Message> {
         if let Some(world) = self.world.for_player(&self.player) {
             let mut message = None;
-            for task in self.tasks.iter_mut() {
-                if let Some(v) = task.value.get_next_message(&world) {
+            for task in self.tasks.read().unwrap().iter().map(Arc::clone) {
+                if let Some(v) = task.read().unwrap().value.lock().unwrap().get_next_message(&world) {
                     if !matches!(v, Message::Done { .. }) {
                         message = Some(v);
                         break;
@@ -127,22 +137,22 @@ impl Session {
     }
 }
 
-fn make_task(name: &str, params: &[u8]) -> Result<Box<dyn Task>, String> {
+fn make_task(name: &str, params: &[u8]) -> Result<Arc<Mutex<dyn Task>>, String> {
     match name {
-        "Explorer" => Ok(Box::new(Explorer::new())),
-        "ExpWndCloser" => Ok(Box::new(ExpWndCloser::new())),
+        "Explorer" => Ok(Arc::new(Mutex::new(Explorer::new()))),
+        "ExpWndCloser" => Ok(Arc::new(Mutex::new(ExpWndCloser::new()))),
         "NewCharacter" => {
             match serde_json::from_slice::<NewCharacterParams>(params) {
-                Ok(parsed) => Ok(Box::new(NewCharacter::new(parsed))),
-                Err(e) => Err(format!("Failed to parse {} task params: {}", name, e)),
+                Ok(parsed) => Ok(Arc::new(Mutex::new(NewCharacter::new(parsed)))),
+                Err(e) => Err(format!("Failed to parse {} bot params: {}", name, e)),
             }
         }
-        "PathFinder" => Ok(Box::new(PathFinder::new())),
+        "PathFinder" => Ok(Arc::new(Mutex::new(PathFinder::new()))),
         _ => Err(String::from("Task is not found")),
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct SessionData {
     id: i64,
     last_update: i64,
@@ -151,32 +161,8 @@ pub struct SessionData {
     tasks: Vec<BotParams>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 struct BotParams {
     name: String,
     params: Vec<u8>,
-}
-
-impl SessionData {
-    pub fn read_from_file(path: &str) -> Result<Self, String> {
-        let data = match std::fs::read(path) {
-            Ok(v) => v,
-            Err(e) => return Err(format!("Session read file \"{}\" error: {}", path, e)),
-        };
-        match serde_json::from_slice::<SessionData>(data.as_slice()) {
-            Ok(v) => Ok(v),
-            Err(e) => return Err(format!("Session deserialization error: {}", e)),
-        }
-    }
-
-    pub fn write_to_file(&self, path: &str) -> Result<(), String> {
-        let data = match serde_json::to_vec(self) {
-            Ok(v) => v,
-            Err(e) => return Err(format!("Session write to file \"{}\" error: {}", path, e)),
-        };
-        match std::fs::write(path, data.as_slice()) {
-            Ok(_) => Ok(()),
-            Err(e) => return Err(format!("Session serialization error: {}", e)),
-        }
-    }
 }

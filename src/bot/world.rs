@@ -417,7 +417,7 @@ impl<'a> PlayerWorld<'a> {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct WorldData {
     objects: ObjectsData,
     map: MapData,
