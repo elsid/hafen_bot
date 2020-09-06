@@ -6,7 +6,7 @@ use crate::bot::bot::Bot;
 use crate::bot::map::{map_pos_to_pos, pos_to_map_pos};
 use crate::bot::protocol::{Button, Event, Message, Modifier, Update, Value};
 use crate::bot::vec2::Vec2i;
-use crate::bot::visualization::Scene;
+use crate::bot::visualization::{ArrowNode, CompositeNode, Layer, MapTransformNode, Node, Scene};
 use crate::bot::world::PlayerWorld;
 
 const MAX_DISTANCE: f64 = 1.0;
@@ -23,6 +23,7 @@ pub struct NewCharacter {
     change_name_window_id: Option<i32>,
     change_name_text_id: Option<i32>,
     state: State,
+    layer: Option<Layer>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +49,7 @@ impl NewCharacter {
             change_name_window_id: None,
             change_name_text_id: None,
             state: State::FindNameChanger,
+            layer: None,
         }
     }
 }
@@ -86,6 +88,22 @@ impl Bot for NewCharacter {
         if let Some(object) = world.get_object_by_name(&self.name_changer) {
             info!("NewCharacter: go to the name changer");
             self.state = State::WaitForChangeNameTextId;
+            self.layer = Some(Layer::new(
+                scene.clone(),
+                Arc::new(Mutex::new(
+                    Node::MapTransform(Box::new(MapTransformNode {
+                        node: {
+                            let position = world.player_position();
+                            Node::Arrow(ArrowNode {
+                                value: Line::new([1.0, 1.0, 1.0, 1.0], 0.2),
+                                line: [position.x(), position.y(), object.position.x(), object.position.y()],
+                                head_size: 1.0,
+                                transform: identity(),
+                            })
+                        },
+                    }))
+                )),
+            ));
             return Some(Message::WidgetMessage {
                 sender: world.map_view_id(),
                 kind: String::from("click"),
@@ -111,6 +129,37 @@ impl Bot for NewCharacter {
             self.map_pos_path.pop_front();
         }
         if let Some(map_pos) = self.map_pos_path.front() {
+            self.layer = Some(Layer::new(
+                scene.clone(),
+                Arc::new(Mutex::new(
+                    Node::MapTransform(Box::new(MapTransformNode {
+                        node: Node::Composite(CompositeNode {
+                            nodes: {
+                                let mut nodes = Vec::new();
+                                let position = world.player_position();
+                                let target = map_pos_to_pos(self.map_pos_path[0]);
+                                nodes.push(Node::Arrow(ArrowNode {
+                                    value: Line::new([1.0, 1.0, 1.0, 1.0], 0.2),
+                                    line: [position.x(), position.y(), target.x(), target.y()],
+                                    head_size: 1.0,
+                                    transform: identity(),
+                                }));
+                                for i in 0..self.map_pos_path.len() - 1 {
+                                    let src = map_pos_to_pos(self.map_pos_path[i]);
+                                    let dst = map_pos_to_pos(self.map_pos_path[i + 1]);
+                                    nodes.push(Node::Arrow(ArrowNode {
+                                        value: Line::new([1.0, 1.0, 1.0, 1.0], 0.2),
+                                        line: [src.x(), src.y(), dst.x(), dst.y()],
+                                        head_size: 1.0,
+                                        transform: identity(),
+                                    }));
+                                }
+                                nodes
+                            },
+                        }),
+                    }))
+                )),
+            ));
             info!("NewCharacter: go to the next path point: {:?}", map_pos);
             return Some(Message::WidgetMessage {
                 sender: world.map_view_id(),
