@@ -1,16 +1,25 @@
 use std::collections::{BinaryHeap, BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
 
+use graphics::{Line, Rectangle, Transformed};
+use graphics::math::identity;
+use graphics::rectangle::square;
 use serde::{Deserialize, Serialize};
 
-use crate::bot::map::{Grid, grid_pos_to_tile_pos, GridNeighbour, Map, MapData, pos_to_grid_pos, Tile, TileSet};
+use crate::bot::map::{Grid, grid_pos_to_tile_pos, GridNeighbour, Map, MapData, pos_to_grid_pos, rel_tile_pos_to_pos, Tile, tile_pos_to_pos, TILE_SIZE, TileSet};
 use crate::bot::math::as_score;
 use crate::bot::objects::{Object, Objects, ObjectsData};
 use crate::bot::player::{Player, Widget};
 use crate::bot::protocol::{Event, MapGrid, Update};
+use crate::bot::scene::{ArrowNode, CompositeBTreeMapNode, insert_to_composite_node_btree_map, Node, RectangleNode, remove_from_composite_node_btree_map};
 use crate::bot::vec2::{Vec2f, Vec2i};
 use crate::bot::walk_grid::walk_grid;
 
 const REPORT_ITERATIONS: usize = 1_000_000;
+const FOUND_TRANSITION_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 0.2];
+const PATH_TRANSITION_COLOR: [f32; 4] = [0.6, 0.8, 0.6, 0.8];
+const SHORTEN_PATH_TRANSITION_COLOR: [f32; 4] = [0.4, 0.8, 0.4, 0.9];
+const DIRECT_PATH_TRANSITION_COLOR: [f32; 4] = [0.8, 0.4, 0.2, 0.9];
 
 pub struct World {
     revision: u64,
@@ -233,16 +242,23 @@ impl<'a> PlayerWorld<'a> {
     }
 
     pub fn find_path(&self, src_tile_pos: Vec2i, dst_tile_pos: Vec2i, weights: &impl TileWeights,
-                     max_shortcut_length: f64, max_iterations: usize) -> Vec<Vec2i> {
+                     max_shortcut_length: f64, max_iterations: usize,
+                     node: &Arc<Mutex<Node>>) -> Vec<Vec2i> {
         if src_tile_pos == dst_tile_pos {
             return vec![dst_tile_pos];
         }
-        let path = self.find_reversed_tiles_path(src_tile_pos, dst_tile_pos, weights, max_iterations);
-        self.shorten_reversed_tiles_path(path, weights, max_shortcut_length)
+        let mut transitions = Transitions::new(node);
+        transitions.add_direct_path(src_tile_pos, dst_tile_pos);
+        let path = self.find_reversed_tiles_path(src_tile_pos, dst_tile_pos, weights, max_iterations, &mut transitions);
+        transitions.add_path(src_tile_pos, &path, true, PATH_TRANSITION_COLOR);
+        let shorten_path = self.shorten_reversed_tiles_path(path, weights, max_shortcut_length);
+        transitions.add_shorten_path(src_tile_pos, &shorten_path);
+        shorten_path
     }
 
     fn find_reversed_tiles_path(&self, src_tile_pos: Vec2i, dst_tile_pos: Vec2i,
-                                weights: &impl TileWeights, max_iterations: usize) -> Vec<Vec2i> {
+                                weights: &impl TileWeights, max_iterations: usize,
+                                transitions: &mut Transitions) -> Vec<Vec2i> {
         let mut ordered = BinaryHeap::new();
         let mut costs: BTreeMap<Vec2i, f64> = BTreeMap::new();
         let mut backtrack = BTreeMap::new();
@@ -328,6 +344,7 @@ impl<'a> PlayerWorld<'a> {
                                     push_count += 1;
                                 }
                             }
+                            transitions.update_found(tile_pos, next_tile_pos);
                         }
                     }
                 }
@@ -497,5 +514,112 @@ pub struct BTreeMapTileWeights<'a>(pub &'a BTreeMap<i32, f64>);
 impl<'a> TileWeights for BTreeMapTileWeights<'a> {
     fn get(&self, tile: i32) -> Option<f64> {
         self.0.get(&tile).map(|v| *v)
+    }
+}
+
+pub fn make_find_path_node() -> Arc<Mutex<Node>> {
+    Arc::new(Mutex::new(Node::CompositeBTreeMap(CompositeBTreeMapNode::default())))
+}
+
+struct Transitions<'a> {
+    node: &'a Arc<Mutex<Node>>,
+    id_counter: usize,
+    values: BTreeMap<Vec2i, (Vec2i, usize)>,
+}
+
+impl<'a> Transitions<'a> {
+    fn new(node: &'a Arc<Mutex<Node>>) -> Self {
+        Self {
+            node,
+            id_counter: 0,
+            values: BTreeMap::new(),
+        }
+    }
+
+    fn add_direct_path(&mut self, src_tile_pos: Vec2i, dst_tile_pos: Vec2i) {
+        self.id_counter += 1;
+        let src = rel_tile_pos_to_pos(src_tile_pos.center());
+        let dst = rel_tile_pos_to_pos(dst_tile_pos.center());
+        self.id_counter += 1;
+        insert_to_composite_node_btree_map(self.node, self.id_counter, Node::from(ArrowNode {
+            value: Line::new(DIRECT_PATH_TRANSITION_COLOR, 0.2),
+            line: [src.x(), src.y(), dst.x(), dst.y()],
+            head_size: 2.0,
+            transform: identity(),
+        }));
+    }
+
+    fn set(&mut self, src: Vec2i, dst: Vec2i) -> (usize, Option<usize>) {
+        self.id_counter += 1;
+        (self.id_counter, self.values.insert(dst, (src, self.id_counter)).map(|(_, id)| id))
+    }
+
+    fn update_found(&mut self, tile_pos: Vec2i, next_tile_pos: Vec2i) {
+        let (new_id, old_id) = self.set(tile_pos, next_tile_pos);
+        if let Some(id) = old_id {
+            remove_from_composite_node_btree_map(self.node, id);
+        }
+        let src = rel_tile_pos_to_pos(tile_pos.center());
+        let dst = rel_tile_pos_to_pos(next_tile_pos.center());
+        insert_to_composite_node_btree_map(self.node, new_id, Node::from(ArrowNode {
+            value: Line::new(FOUND_TRANSITION_COLOR, 0.2),
+            line: [src.x(), src.y(), dst.x(), dst.y()],
+            head_size: 2.0,
+            transform: identity(),
+        }));
+    }
+
+    fn add_path(&mut self, src_tile_pos: Vec2i, path: &Vec<Vec2i>, reversed: bool, color: [f32; 4]) {
+        if path.is_empty() {
+            return;
+        }
+        if reversed {
+            self.add_path_arrow_transition(src_tile_pos, path[path.len() - 1], color);
+        } else {
+            self.add_path_arrow_transition(src_tile_pos, path[0], color);
+        }
+        for i in 0..path.len() - 1 {
+            if reversed {
+                self.add_path_arrow_transition(path[i + 1], path[i], color);
+            } else {
+                self.add_path_arrow_transition(path[i], path[i + 1], color);
+            }
+        }
+    }
+
+    fn add_shorten_path(&mut self, src_tile_pos: Vec2i, path: &Vec<Vec2i>) {
+        if path.is_empty() {
+            return;
+        }
+        self.add_path_tiles_transition(src_tile_pos, path[0]);
+        self.add_path(src_tile_pos, path, false, SHORTEN_PATH_TRANSITION_COLOR);
+        for i in 0..path.len() - 1 {
+            self.add_path_tiles_transition(path[i], path[i + 1]);
+        }
+    }
+
+    fn add_path_arrow_transition(&mut self, src_tile_pos: Vec2i, dst_tile_pos: Vec2i, color: [f32; 4]) {
+        let src = rel_tile_pos_to_pos(src_tile_pos.center());
+        let dst = rel_tile_pos_to_pos(dst_tile_pos.center());
+        self.id_counter += 1;
+        insert_to_composite_node_btree_map(self.node, self.id_counter, Node::from(ArrowNode {
+            value: Line::new(color, 0.2),
+            line: [src.x(), src.y(), dst.x(), dst.y()],
+            head_size: 2.0,
+            transform: identity(),
+        }));
+    }
+
+    fn add_path_tiles_transition(&mut self, src_tile_pos: Vec2i, dst_tile_pos: Vec2i) {
+        walk_grid(src_tile_pos.center(), dst_tile_pos.center(), |position| {
+            self.id_counter += 1;
+            let rect_pos = tile_pos_to_pos(Vec2i::from(position.floor()));
+            insert_to_composite_node_btree_map(self.node, self.id_counter, Node::from(RectangleNode {
+                value: Rectangle::new([0.4, 0.8, 0.4, 0.6]),
+                rectangle: square(0.0, 0.0, TILE_SIZE),
+                transform: identity().trans(rect_pos.x(), rect_pos.y()),
+            }));
+            true
+        });
     }
 }

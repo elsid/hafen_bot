@@ -1,13 +1,14 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::{Arc, Mutex};
 
 use crate::bot::clusterization::{get_cluster_median, make_adjacent_tiles_clusters};
 use crate::bot::map::{pos_to_map_pos, pos_to_rel_tile_pos, pos_to_tile_pos, rel_tile_pos_to_pos, tile_pos_to_pos, TILE_SIZE};
 use crate::bot::math::as_score;
 use crate::bot::protocol::{Button, Message, Modifier, Update, Value};
 use crate::bot::tasks::task::Task;
-use crate::bot::scene::Scene;
 use crate::bot::vec2::Vec2i;
-use crate::bot::world::{BTreeMapTileWeights, PlayerWorld};
+use crate::bot::scene::{Layer, MapTransformArcNode, Node, Scene};
+use crate::bot::world::{BTreeMapTileWeights, make_find_path_node, PlayerWorld};
 
 const WATER_TILES_COST: &'static [(&'static str, f64)] = &[
     ("gfx/tiles/water", 3.0),
@@ -20,6 +21,7 @@ const MAX_ITERATIONS: usize = 10 * 1_000_000;
 pub struct Explorer {
     border_tiles: Vec<Vec2i>,
     tile_pos_path: VecDeque<Vec2i>,
+    find_path_layer: Option<Layer>,
 }
 
 impl Explorer {
@@ -27,6 +29,7 @@ impl Explorer {
         Self {
             border_tiles: Vec::new(),
             tile_pos_path: VecDeque::new(),
+            find_path_layer: None,
         }
     }
 }
@@ -36,7 +39,7 @@ impl Task for Explorer {
         "Explorer"
     }
 
-    fn get_next_message(&mut self, world: &PlayerWorld, _: &Scene) -> Option<Message> {
+    fn get_next_message(&mut self, world: &PlayerWorld, scene: &Scene) -> Option<Message> {
         let player_pos = world.player_position();
         let water_tiles_cost = WATER_TILES_COST.iter()
             .filter_map(|&(name, weight)| {
@@ -53,6 +56,15 @@ impl Task for Explorer {
             debug!("Explorer: found border tiles: {:?}", self.border_tiles);
         }
         while let (true, Some(dst_tile_pos)) = (self.tile_pos_path.is_empty(), self.border_tiles.last()) {
+            let find_path_node = make_find_path_node();
+            self.find_path_layer = Some(Layer::new(
+                scene.clone(),
+                Arc::new(Mutex::new(
+                    Node::from(MapTransformArcNode {
+                        node: find_path_node.clone(),
+                    })
+                )),
+            ));
             let src_tile_pos = pos_to_tile_pos(player_pos);
             self.tile_pos_path = VecDeque::from(world.find_path(
                 src_tile_pos,
@@ -60,6 +72,7 @@ impl Task for Explorer {
                 &BTreeMapTileWeights(&water_tiles_cost),
                 MAX_FIND_PATH_SHORTCUT_LENGTH,
                 MAX_ITERATIONS,
+                &find_path_node,
             ));
             if !self.tile_pos_path.is_empty() {
                 debug!("Explorer: found path from {:?} to {:?} by tiles {:?}: {:?}",
