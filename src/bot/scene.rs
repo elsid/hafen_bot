@@ -418,3 +418,21 @@ impl TriangleNode {
         1
     }
 }
+
+pub fn insert_to_composite_node_btree_map(target: &Arc<Mutex<Node>>, key: usize, node: Node) {
+    match target.lock().unwrap().deref_mut() {
+        Node::CompositeBTreeMap(ref mut v) => {
+            v.nodes.insert(key, node);
+        }
+        _ => (),
+    }
+}
+
+pub fn remove_from_composite_node_btree_map(target: &Arc<Mutex<Node>>, key: usize) {
+    match target.lock().unwrap().deref_mut() {
+        Node::CompositeBTreeMap(ref mut v) => {
+            v.nodes.remove(&key);
+        }
+        _ => (),
+    }
+}
