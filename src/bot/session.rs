@@ -5,6 +5,7 @@ use crate::bot::protocol::{Message, Update};
 use crate::bot::tasks::exp_wnd_closer::ExpWndCloser;
 use crate::bot::tasks::explorer::Explorer;
 use crate::bot::tasks::new_character::{NewCharacter, NewCharacterParams};
+use crate::bot::tasks::path_finder::PathFinder;
 use crate::bot::tasks::task::Task;
 use crate::bot::world::{World, WorldData};
 
@@ -86,14 +87,18 @@ impl Session {
 
     pub fn get_next_message(&mut self) -> Option<Message> {
         if let Some(world) = self.world.for_player(&self.player) {
+            let mut message = None;
             for task in self.tasks.iter_mut() {
                 if let Some(v) = task.get_next_message(&world) {
-                    debug!("Next message for session {}: {:?}", self.id, v);
-                    return Some(v);
+                    if !matches!(v, Message::Done { .. }) {
+                        message = Some(v);
+                        break;
+                    }
+                    message = Some(v);
                 }
             }
-            debug!("No messages from any task for session {}", self.id);
-            None
+            debug!("Next message for session {}: {:?}", self.id, message);
+            message
         } else {
             debug!("World is not configured for session {}", self.id);
             None
@@ -111,6 +116,7 @@ fn make_task(name: &str, params: &[u8]) -> Result<Box<dyn Task>, String> {
                 Err(e) => Err(format!("Failed to parse {} task params: {}", name, e)),
             }
         }
+        "PathFinder" => Ok(Box::new(PathFinder::new())),
         _ => Err(String::from("Task is not found")),
     }
 }

@@ -184,6 +184,10 @@ pub fn map_pos_to_pos(map_pos: Vec2i) -> Vec2f {
     map_pos.center() * RESOLUTION
 }
 
+pub fn map_pos_to_tile_pos(map_pos: Vec2i) -> Vec2i {
+    pos_to_tile_pos(map_pos_to_pos(map_pos))
+}
+
 pub fn pos_to_map_pos(pos: Vec2f) -> Vec2i {
     Vec2i::from(pos.floor_by(RESOLUTION))
 }
