@@ -4,6 +4,7 @@ use crate::bot::bot::Bot;
 use crate::bot::exp_wnd_closer::ExpWndCloser;
 use crate::bot::explorer::Explorer;
 use crate::bot::new_character::{NewCharacter, NewCharacterParams};
+use crate::bot::path_finder::PathFinder;
 use crate::bot::player::{Player, PlayerData};
 use crate::bot::protocol::{Message, Update};
 use crate::bot::world::{World, WorldData};
@@ -111,6 +112,7 @@ fn make_bot(name: &str, params: &[u8]) -> Result<Box<dyn Bot>, String> {
                 Err(e) => Err(format!("Failed to parse {} bot params: {}", name, e)),
             }
         }
+        "PathFinder" => Ok(Box::new(PathFinder::new())),
         _ => Err(String::from("Bot is not found")),
     }
 }

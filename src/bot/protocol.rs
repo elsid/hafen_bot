@@ -70,7 +70,7 @@ pub enum Event {
     },
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialOrd, PartialEq)]
 #[serde(tag = "type")]
 pub enum Value {
     Nil,
@@ -133,9 +133,10 @@ pub enum Message {
         kind: String,
         arguments: Vec<Value>,
     },
+    Done { bot: String },
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialOrd, PartialEq)]
 pub struct Color {
     pub r: i32,
     pub g: i32,
