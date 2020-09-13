@@ -1,12 +1,16 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
+use graphics::{Rectangle, Transformed};
+use graphics::math::identity;
+use graphics::rectangle::square;
+
 use crate::bot::bot::Bot;
 use crate::bot::clusterization::{get_cluster_median, make_adjacent_tiles_clusters};
 use crate::bot::map::{pos_to_map_pos, pos_to_rel_tile_pos, pos_to_tile_pos, rel_tile_pos_to_pos, tile_pos_to_pos, TILE_SIZE};
 use crate::bot::math::as_score;
 use crate::bot::protocol::{Button, Message, Modifier, Update, Value};
-use crate::bot::scene::{Layer, MapTransformArcNode, Node, Scene};
+use crate::bot::scene::{CompositeVecNode, Layer, MapTransformArcNode, MapTransformBoxNode, Node, RectangleNode, Scene};
 use crate::bot::vec2::Vec2i;
 use crate::bot::world::{BTreeMapTileWeights, make_find_path_node, PlayerWorld};
 
@@ -22,6 +26,7 @@ pub struct Explorer {
     border_tiles: Vec<Vec2i>,
     tile_pos_path: VecDeque<Vec2i>,
     find_path_layer: Option<Layer>,
+    border_tiles_layer: Option<Layer>,
 }
 
 impl Explorer {
@@ -30,6 +35,7 @@ impl Explorer {
             border_tiles: Vec::new(),
             tile_pos_path: VecDeque::new(),
             find_path_layer: None,
+            border_tiles_layer: None,
         }
     }
 }
@@ -54,6 +60,7 @@ impl Bot for Explorer {
                 -as_score(rel_tile_pos_to_pos(tile_pos.center()).distance(player_pos))
             });
             debug!("Explorer: found border tiles: {:?}", self.border_tiles);
+            self.border_tiles_layer = Some(make_border_tiles_layer(scene.clone(), &self.border_tiles));
         }
         while let (true, Some(dst_tile_pos)) = (self.tile_pos_path.is_empty(), self.border_tiles.last()) {
             let find_path_node = make_find_path_node();
@@ -82,6 +89,7 @@ impl Bot for Explorer {
             debug!("Explorer: path from {:?} to {:?} is not found by tiles {:?}",
                    src_tile_pos, dst_tile_pos, water_tiles_cost);
             self.border_tiles.pop();
+            self.border_tiles_layer = Some(make_border_tiles_layer(scene.clone(), &self.border_tiles));
         }
         while self.tile_pos_path.len() >= 2 {
             let src_rel_tile_pos = pos_to_rel_tile_pos(player_pos);
@@ -121,4 +129,30 @@ impl Bot for Explorer {
     }
 
     fn update(&mut self, _: &PlayerWorld, _: &Update) {}
+}
+
+fn make_border_tiles_layer(scene: Scene, border_tiles: &Vec<Vec2i>) -> Layer {
+    Layer::new(
+        scene,
+        Arc::new(Mutex::new(
+            Node::from(MapTransformBoxNode {
+                node: Box::new(make_border_tiles_node(border_tiles)),
+            })
+        )),
+    )
+}
+
+fn make_border_tiles_node(border_tiles: &Vec<Vec2i>) -> Node {
+    Node::from(CompositeVecNode {
+        nodes: border_tiles.iter()
+            .map(|tile_pos| {
+                let position = tile_pos_to_pos(*tile_pos);
+                Node::from(RectangleNode {
+                    value: Rectangle::new([0.8, 0.4, 0.2, 0.9]),
+                    rectangle: square(0.0, 0.0, TILE_SIZE),
+                    transform: identity().trans(position.x(), position.y()),
+                })
+            })
+            .collect()
+    })
 }
