@@ -70,6 +70,16 @@ pub enum Event {
         args: Vec<Value>,
     },
     Close,
+    TaskAdd {
+        name: String,
+        params: Vec<u8>,
+    },
+    TaskRemove {
+        id: i64,
+    },
+    VisualizationAdd,
+    SessionData { value: Option<String> },
+    GetSessionData,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialOrd, PartialEq)]
@@ -77,6 +87,7 @@ pub enum Event {
 pub enum Value {
     Nil,
     Int { value: i32 },
+    Long { value: i64 },
     Str { value: String },
     Coord { value: Vec2i },
     Bytes { value: Vec<u8> },
@@ -108,6 +119,7 @@ macro_rules! value_from_to_impl {
 }
 
 value_from_impl! { i32, Int }
+value_from_impl! { i64, Long }
 value_from_impl! { String, Str }
 value_from_impl! { Vec2i, Coord }
 value_from_impl! { Vec<u8>, Bytes }
@@ -136,7 +148,8 @@ pub enum Message {
         arguments: Vec<Value>,
     },
     Done { task: String },
-    SessionData { value: SessionData },
+    Session { value: SessionData },
+    SessionData { value: String },
     GetSessionData,
 }
 

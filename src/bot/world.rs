@@ -1,4 +1,4 @@
-use std::collections::{BinaryHeap, BTreeMap, BTreeSet};
+use std::collections::{BinaryHeap, BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
 use graphics::{Line, Rectangle, Transformed};
@@ -16,32 +16,39 @@ use crate::bot::scene::{ArrowNode, CompositeBTreeMapNode, insert_to_composite_no
 use crate::bot::vec2::{Vec2f, Vec2i};
 use crate::bot::walk_grid::walk_grid;
 
-const REPORT_ITERATIONS: usize = 1_000_000;
-const FOUND_TRANSITION_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 0.2];
-const PATH_TRANSITION_COLOR: [f32; 4] = [0.6, 0.8, 0.6, 0.8];
-const SHORTEN_PATH_TRANSITION_COLOR: [f32; 4] = [0.4, 0.8, 0.4, 0.9];
-const DIRECT_PATH_TRANSITION_COLOR: [f32; 4] = [0.8, 0.4, 0.2, 0.9];
+#[derive(Clone, Deserialize)]
+pub struct WorldConfig {
+    pub water_tiles: HashMap<String, f64>,
+    pub report_iterations: usize,
+    pub found_transition_color: [f32; 4],
+    pub path_transition_color: [f32; 4],
+    pub shorten_path_transition_color: [f32; 4],
+    pub direct_path_transition_color: [f32; 4],
+}
 
 pub struct World {
     revision: u64,
     objects: Objects,
     map: Map,
+    config: WorldConfig,
 }
 
 impl World {
-    pub fn new(map_db: Arc<Mutex<dyn MapDb + Send>>) -> Self {
+    pub fn new(config: WorldConfig, map_db: Arc<Mutex<dyn MapDb + Send>>) -> Self {
         Self {
             revision: 0,
             objects: Objects::new(),
             map: Map::new(map_db),
+            config,
         }
     }
 
-    pub fn from_world_data(data: WorldData, map_db: Arc<Mutex<dyn MapDb + Send>>) -> Self {
+    pub fn from_world_data(data: WorldData, config: WorldConfig, map_db: Arc<Mutex<dyn MapDb + Send>>) -> Self {
         Self {
             revision: data.revision,
             objects: Objects::from_objects_data(data.objects),
             map: Map::from_map_data(data.map, map_db),
+            config,
         }
     }
 
@@ -92,6 +99,7 @@ impl World {
                                 player_grid_offset,
                                 objects: &self.objects,
                                 map: &self.map,
+                                config: &self.config,
                             }
                         })
                 })
@@ -176,6 +184,7 @@ pub struct PlayerWorld<'a> {
     player_grid_offset: Vec2i,
     objects: &'a Objects,
     map: &'a Map,
+    config: &'a WorldConfig,
 }
 
 impl<'a> PlayerWorld<'a> {
@@ -185,6 +194,10 @@ impl<'a> PlayerWorld<'a> {
 
     pub fn map_view_id(&self) -> i32 {
         self.map_view_id
+    }
+
+    pub fn game_ui_id(&self) -> i32 {
+        self.game_ui_id
     }
 
     pub fn player_object_id(&self) -> i64 {
@@ -205,6 +218,10 @@ impl<'a> PlayerWorld<'a> {
 
     pub fn is_player_stuck(&self) -> bool {
         self.player.is_stuck()
+    }
+
+    pub fn config(&self) -> &WorldConfig {
+        self.config
     }
 
     pub fn get_object_by_name(&self, name: &String) -> Option<&Object> {
@@ -252,10 +269,15 @@ impl<'a> PlayerWorld<'a> {
         if src_tile_pos == dst_tile_pos {
             return vec![dst_tile_pos];
         }
-        let mut transitions = Transitions::new(node);
+        let mut transitions = Transitions::new(
+            node,
+            &self.config.direct_path_transition_color,
+            &self.config.found_transition_color,
+            &self.config.shorten_path_transition_color,
+        );
         transitions.add_direct_path(src_tile_pos, dst_tile_pos);
         let path = self.find_reversed_tiles_path(src_tile_pos, dst_tile_pos, weights, max_iterations, &mut transitions);
-        transitions.add_path(src_tile_pos, &path, true, PATH_TRANSITION_COLOR);
+        transitions.add_path(src_tile_pos, &path, true, self.config.path_transition_color);
         let shorten_path = self.shorten_reversed_tiles_path(path, weights, max_shortcut_length);
         transitions.add_shorten_path(src_tile_pos, &shorten_path);
         shorten_path
@@ -355,7 +377,7 @@ impl<'a> PlayerWorld<'a> {
                 }
             }
             iterations += 1;
-            if iterations % REPORT_ITERATIONS == 0 {
+            if iterations % self.config.report_iterations == 0 {
                 debug!("find_reversed_tiles_path iterations={} ordered={} costs={} push_count={} min_distance={}",
                        iterations, ordered.len(), costs.len(), push_count, min_distance);
             }
@@ -530,14 +552,21 @@ struct Transitions<'a> {
     node: &'a Arc<Mutex<Node>>,
     id_counter: usize,
     values: BTreeMap<Vec2i, (Vec2i, usize)>,
+    direct_path_transition_color: &'a [f32; 4],
+    found_transition_color: &'a [f32; 4],
+    shorten_path_transition_color: &'a [f32; 4],
 }
 
 impl<'a> Transitions<'a> {
-    fn new(node: &'a Arc<Mutex<Node>>) -> Self {
+    fn new(node: &'a Arc<Mutex<Node>>, direct_path_transition_color: &'a [f32; 4],
+           found_transition_color: &'a [f32; 4], shorten_path_transition_color: &'a [f32; 4]) -> Self {
         Self {
             node,
             id_counter: 0,
             values: BTreeMap::new(),
+            direct_path_transition_color,
+            found_transition_color,
+            shorten_path_transition_color,
         }
     }
 
@@ -547,7 +576,7 @@ impl<'a> Transitions<'a> {
         let dst = rel_tile_pos_to_pos(dst_tile_pos.center());
         self.id_counter += 1;
         insert_to_composite_node_btree_map(self.node, self.id_counter, Node::from(ArrowNode {
-            value: Line::new(DIRECT_PATH_TRANSITION_COLOR, 0.2),
+            value: Line::new(self.direct_path_transition_color.clone(), 0.2),
             line: [src.x(), src.y(), dst.x(), dst.y()],
             head_size: 2.0,
             transform: identity(),
@@ -567,7 +596,7 @@ impl<'a> Transitions<'a> {
         let src = rel_tile_pos_to_pos(tile_pos.center());
         let dst = rel_tile_pos_to_pos(next_tile_pos.center());
         insert_to_composite_node_btree_map(self.node, new_id, Node::from(ArrowNode {
-            value: Line::new(FOUND_TRANSITION_COLOR, 0.2),
+            value: Line::new(self.found_transition_color.clone(), 0.2),
             line: [src.x(), src.y(), dst.x(), dst.y()],
             head_size: 2.0,
             transform: identity(),
@@ -597,7 +626,7 @@ impl<'a> Transitions<'a> {
             return;
         }
         self.add_path_tiles_transition(src_tile_pos, path[0]);
-        self.add_path(src_tile_pos, path, false, SHORTEN_PATH_TRANSITION_COLOR);
+        self.add_path(src_tile_pos, path, false, self.shorten_path_transition_color.clone());
         for i in 0..path.len() - 1 {
             self.add_path_tiles_transition(path[i], path[i + 1]);
         }

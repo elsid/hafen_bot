@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
+use serde::Deserialize;
+
 use crate::bot::map::{map_pos_to_tile_pos, pos_to_map_pos, pos_to_rel_tile_pos, pos_to_tile_pos, rel_tile_pos_to_pos, TILE_SIZE};
 use crate::bot::protocol::{Button, Event, Message, Modifier, Update, Value};
 use crate::bot::scene::{Layer, MapTransformArcNode, Node, Scene};
@@ -8,26 +10,27 @@ use crate::bot::tasks::task::Task;
 use crate::bot::vec2::Vec2i;
 use crate::bot::world::{BTreeMapTileWeights, make_find_path_node, PlayerWorld};
 
-const WATER_TILES_COST: &'static [(&'static str, f64)] = &[
-    ("gfx/tiles/water", 3.0),
-    ("gfx/tiles/deep", 1.0),
-];
-const MAX_FIND_PATH_SHORTCUT_LENGTH: f64 = 25.0;
-const MAX_NEXT_POINT_SHORTCUT_LENGTH: f64 = 50.0;
-const MAX_ITERATIONS: usize = 1_000_000;
+#[derive(Clone, Deserialize)]
+pub struct PathFinderConfig {
+    pub find_path_max_shortcut_length: f64,
+    pub find_path_max_iterations: usize,
+    pub max_next_point_shortcut_length: f64,
+}
 
 pub struct PathFinder {
     destination: Option<Vec2i>,
     tile_pos_path: VecDeque<Vec2i>,
     find_path_layer: Option<Layer>,
+    config: PathFinderConfig,
 }
 
 impl PathFinder {
-    pub fn new() -> Self {
+    pub fn new(config: PathFinderConfig) -> Self {
         Self {
             destination: None,
             tile_pos_path: VecDeque::new(),
             find_path_layer: None,
+            config,
         }
     }
 }
@@ -47,9 +50,9 @@ impl Task for PathFinder {
             return Some(Message::Done { task: String::from("PathFinder") });
         }
         let player_tile = world.get_tile(player_tile_pos);
-        let water_tiles_cost = WATER_TILES_COST.iter()
-            .filter_map(|&(name, weight)| {
-                world.get_tile_id_by_name(&String::from(name)).map(|id| (id, weight))
+        let water_tiles_cost = world.config().water_tiles.iter()
+            .filter_map(|(name, weight)| {
+                world.get_tile_id_by_name(name).map(|id| (id, *weight))
             })
             .collect::<BTreeMap<i32, f64>>();
         if player_tile.is_none() || !water_tiles_cost.contains_key(&player_tile.unwrap()) {
@@ -74,8 +77,8 @@ impl Task for PathFinder {
                     src_tile_pos,
                     dst_tile_pos,
                     &BTreeMapTileWeights(&water_tiles_cost),
-                    MAX_FIND_PATH_SHORTCUT_LENGTH,
-                    MAX_ITERATIONS,
+                    self.config.find_path_max_shortcut_length,
+                    self.config.find_path_max_iterations,
                     &find_path_node,
                 ));
                 if self.tile_pos_path.is_empty() {
@@ -95,7 +98,7 @@ impl Task for PathFinder {
                 src_rel_tile_pos,
                 dst_rel_tile_pos,
                 &BTreeMapTileWeights(&water_tiles_cost),
-                MAX_NEXT_POINT_SHORTCUT_LENGTH,
+                self.config.max_next_point_shortcut_length,
             ) {
                 break;
             }

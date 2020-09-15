@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use graphics::{Rectangle, Transformed};
 use graphics::math::identity;
 use graphics::rectangle::square;
+use serde::Deserialize;
 
 use crate::bot::clusterization::{get_cluster_median, make_adjacent_tiles_clusters};
 use crate::bot::map::{pos_to_map_pos, pos_to_rel_tile_pos, pos_to_tile_pos, rel_tile_pos_to_pos, tile_pos_to_pos, TILE_SIZE};
@@ -14,28 +15,29 @@ use crate::bot::tasks::task::Task;
 use crate::bot::vec2::Vec2i;
 use crate::bot::world::{BTreeMapTileWeights, make_find_path_node, PlayerWorld};
 
-const WATER_TILES_COST: &'static [(&'static str, f64)] = &[
-    ("gfx/tiles/water", 3.0),
-    ("gfx/tiles/deep", 1.0),
-];
-const MAX_FIND_PATH_SHORTCUT_LENGTH: f64 = 25.0;
-const MAX_NEXT_POINT_SHORTCUT_LENGTH: f64 = 50.0;
-const MAX_ITERATIONS: usize = 10 * 1_000_000;
+#[derive(Clone, Deserialize)]
+pub struct ExplorerConfig {
+    pub find_path_max_shortcut_length: f64,
+    pub find_path_max_iterations: usize,
+    pub max_next_point_shortcut_length: f64,
+}
 
 pub struct Explorer {
     border_tiles: Vec<Vec2i>,
     tile_pos_path: VecDeque<Vec2i>,
     find_path_layer: Option<Layer>,
     border_tiles_layer: Option<Layer>,
+    config: ExplorerConfig,
 }
 
 impl Explorer {
-    pub fn new() -> Self {
+    pub fn new(config: ExplorerConfig) -> Self {
         Self {
             border_tiles: Vec::new(),
             tile_pos_path: VecDeque::new(),
             find_path_layer: None,
             border_tiles_layer: None,
+            config,
         }
     }
 }
@@ -47,9 +49,9 @@ impl Task for Explorer {
 
     fn get_next_message(&mut self, world: &PlayerWorld, scene: &Scene) -> Option<Message> {
         let player_pos = world.player_position();
-        let water_tiles_cost = WATER_TILES_COST.iter()
-            .filter_map(|&(name, weight)| {
-                world.get_tile_id_by_name(&String::from(name)).map(|id| (id, weight))
+        let water_tiles_cost = world.config().water_tiles.iter()
+            .filter_map(|(name, weight)| {
+                world.get_tile_id_by_name(name).map(|id| (id, *weight))
             })
             .collect::<BTreeMap<i32, f64>>();
         if self.border_tiles.is_empty() {
@@ -77,8 +79,8 @@ impl Task for Explorer {
                 src_tile_pos,
                 *dst_tile_pos,
                 &BTreeMapTileWeights(&water_tiles_cost),
-                MAX_FIND_PATH_SHORTCUT_LENGTH,
-                MAX_ITERATIONS,
+                self.config.find_path_max_shortcut_length,
+                self.config.find_path_max_iterations,
                 &find_path_node,
             ));
             if !self.tile_pos_path.is_empty() {
@@ -98,7 +100,7 @@ impl Task for Explorer {
                 src_rel_tile_pos,
                 dst_rel_tile_pos,
                 &BTreeMapTileWeights(&water_tiles_cost),
-                MAX_NEXT_POINT_SHORTCUT_LENGTH,
+                self.config.max_next_point_shortcut_length,
             ) {
                 break;
             }
