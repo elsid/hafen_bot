@@ -1,4 +1,4 @@
-pub use crate::bot::server::run_server;
+pub use crate::bot::server::{read_config, run_server};
 
 mod session;
 mod protocol;

@@ -1,63 +1,88 @@
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, RwLock};
 
 use serde::{Deserialize, Serialize};
 
 use crate::bot::bot::Bot;
 use crate::bot::exp_wnd_closer::ExpWndCloser;
-use crate::bot::explorer::Explorer;
+use crate::bot::explorer::{Explorer, ExplorerConfig};
 use crate::bot::map_db::MapDb;
 use crate::bot::new_character::{NewCharacter, NewCharacterParams};
-use crate::bot::path_finder::PathFinder;
+use crate::bot::path_finder::{PathFinder, PathFinderConfig};
 use crate::bot::player::{Player, PlayerData};
-use crate::bot::protocol::{Message, Update};
+use crate::bot::protocol::{Event, Message, Update, Value};
 use crate::bot::scene::Scene;
-use crate::bot::world::{PlayerWorld, World, WorldData};
+use crate::bot::world::{PlayerWorld, World, WorldConfig, WorldData};
+
+#[derive(Clone, Deserialize)]
+pub struct SessionConfig {
+    world: WorldConfig,
+    bots: BotConfigs,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct BotConfigs {
+    path_finder: PathFinderConfig,
+    explorer: ExplorerConfig,
+}
 
 pub struct Session {
     id: i64,
     last_update: i64,
     world: World,
     player: Player,
+    bot_id_counter: i64,
     bots: Arc<RwLock<Vec<Arc<RwLock<BotWithParams>>>>>,
     scene: Scene,
+    messages: Arc<Mutex<VecDeque<Message>>>,
+    bot_configs: BotConfigs,
 }
 
 struct BotWithParams {
+    id: i64,
     name: String,
     params: Vec<u8>,
     value: Arc<Mutex<dyn Bot>>,
 }
 
 impl Session {
-    pub fn new(id: i64, map_db: Arc<Mutex<dyn MapDb + Send>>) -> Self {
+    pub fn new(id: i64, map_db: Arc<Mutex<dyn MapDb + Send>>, config: &SessionConfig) -> Self {
         Self {
             id,
             last_update: 0,
-            world: World::new(map_db),
+            world: World::new(config.world.clone(), map_db),
             player: Player::default(),
+            bot_id_counter: 0,
             bots: Arc::new(RwLock::new(Vec::new())),
             scene: Scene::new(),
+            messages: Arc::new(Mutex::new(VecDeque::new())),
+            bot_configs: config.bots.clone(),
         }
     }
 
-    pub fn from_session_data(session_data: SessionData, map_db: Arc<Mutex<dyn MapDb + Send>>) -> Result<Self, String> {
+    pub fn from_session_data(session_data: SessionData, map_db: Arc<Mutex<dyn MapDb + Send>>,
+                             config: &SessionConfig) -> Result<Self, String> {
         Ok(Self {
             id: session_data.id,
             last_update: 0,
-            world: World::from_world_data(session_data.world, map_db),
             player: Player::from_player_data(session_data.player),
+            bot_id_counter: session_data.bot_id_counter,
             bots: {
                 let mut bots = Vec::new();
                 for bot in session_data.bots.into_iter() {
                     bots.push(Arc::new(RwLock::new(BotWithParams {
-                        value: make_bot(bot.name.as_str(), bot.params.as_slice())?,
+                        id: bot.id,
+                        value: make_bot(bot.name.as_str(), bot.params.as_slice(), &config.bots)?,
                         name: bot.name,
                         params: bot.params,
                     })));
                 }
                 Arc::new(RwLock::new(bots))
             },
+            world: World::from_world_data(session_data.world, config.world.clone(), map_db),
             scene: Scene::new(),
+            messages: Arc::new(Mutex::new(VecDeque::new())),
+            bot_configs: config.bots.clone(),
         })
     }
 
@@ -67,11 +92,16 @@ impl Session {
             last_update: self.last_update,
             world: self.world.as_world_data(),
             player: self.player.as_player_data(),
+            bot_id_counter: self.bot_id_counter,
             bots: self.bots.read().unwrap().iter()
                 .map(Arc::clone)
                 .map(|v| {
                     let locked = v.read().unwrap();
-                    BotParams { name: locked.name.clone(), params: locked.params.clone() }
+                    BotParams {
+                        id: locked.id,
+                        name: locked.name.clone(),
+                        params: locked.params.clone(),
+                    }
                 })
                 .collect(),
         }
@@ -88,16 +118,61 @@ impl Session {
     }
 
     pub fn add_bot(&mut self, name: &str, params: &[u8]) -> Result<(), String> {
+        self.bot_id_counter += 1;
+        let id = self.bot_id_counter;
         self.bots.write().unwrap().push(Arc::new(RwLock::new(BotWithParams {
+            id,
             name: String::from(name),
             params: Vec::from(params),
-            value: make_bot(name, params)?,
+            value: make_bot(name, params, &self.bot_configs)?,
         })));
+        if let Some(game_ui_id) = self.player.game_ui_id() {
+            self.messages.lock().unwrap().push_back(Message::UIMessage {
+                id: game_ui_id,
+                kind: String::from("add-bot"),
+                arguments: vec![
+                    Value::from(id),
+                    Value::from(String::from(name)),
+                    Value::from(Vec::from(params)),
+                ],
+            });
+        }
         Ok(())
     }
 
+    pub fn remove_bot(&mut self, id: i64) {
+        let mut removed = false;
+        self.bots.write().unwrap().retain(|bot| {
+            if bot.read().unwrap().id == id {
+                removed = true;
+                false
+            } else {
+                true
+            }
+        });
+        if removed {
+            if let Some(world) = self.world.for_player(&self.player) {
+                self.messages.lock().unwrap().push_back(Message::UIMessage {
+                    id: world.game_ui_id(),
+                    kind: String::from("remove-bot"),
+                    arguments: vec![Value::from(id)],
+                });
+            }
+        }
+    }
+
     pub fn clear_bots(&self) {
-        self.bots.write().unwrap().clear();
+        let mut locked = self.bots.write().unwrap();
+        if let Some(world) = self.world.for_player(&self.player) {
+            for bot in locked.iter() {
+                self.messages.lock().unwrap().push_back(Message::UIMessage {
+                    id: world.game_ui_id(),
+                    kind: String::from("remove-bot"),
+                    arguments: vec![Value::from(bot.read().unwrap().id)],
+                });
+            }
+        }
+        locked.clear();
     }
 
     pub fn update(&mut self, update: Update) -> bool {
@@ -110,6 +185,18 @@ impl Session {
         }
         self.last_update = update.number;
         debug!("Got new update for session {}: {:?}", self.id, update);
+        match &update.event {
+            Event::BotAdd { name, params } => {
+                match self.add_bot(name, params) {
+                    Ok(_) => (),
+                    Err(e) => error!("Failed to add bot: {:?}", e),
+                }
+            }
+            Event::BotRemove { id } => {
+                self.remove_bot(*id);
+            }
+            _ => (),
+        }
         if let Some(world) = self.world.for_player(&self.player) {
             for bot in self.bots.read().unwrap().iter().map(Arc::clone) {
                 bot.read().unwrap().value.lock().unwrap().update(&world, &update);
@@ -126,6 +213,9 @@ impl Session {
     }
 
     pub fn get_next_message(&self) -> Option<Message> {
+        if let Some(bot) = self.messages.lock().unwrap().pop_front() {
+            return Some(bot);
+        }
         if let Some(world) = self.world.for_player(&self.player) {
             for bot in self.bots.read().unwrap().iter().map(Arc::clone) {
                 if let Some(v) = bot.read().unwrap().value.lock().unwrap().get_next_message(&world, &self.scene) {
@@ -146,9 +236,9 @@ impl Session {
     }
 }
 
-fn make_bot(name: &str, params: &[u8]) -> Result<Arc<Mutex<dyn Bot>>, String> {
+fn make_bot(name: &str, params: &[u8], bot_configs: &BotConfigs) -> Result<Arc<Mutex<dyn Bot>>, String> {
     match name {
-        "Explorer" => Ok(Arc::new(Mutex::new(Explorer::new()))),
+        "Explorer" => Ok(Arc::new(Mutex::new(Explorer::new(bot_configs.explorer.clone())))),
         "ExpWndCloser" => Ok(Arc::new(Mutex::new(ExpWndCloser::new()))),
         "NewCharacter" => {
             match serde_json::from_slice::<NewCharacterParams>(params) {
@@ -156,7 +246,7 @@ fn make_bot(name: &str, params: &[u8]) -> Result<Arc<Mutex<dyn Bot>>, String> {
                 Err(e) => Err(format!("Failed to parse {} bot params: {}", name, e)),
             }
         }
-        "PathFinder" => Ok(Arc::new(Mutex::new(PathFinder::new()))),
+        "PathFinder" => Ok(Arc::new(Mutex::new(PathFinder::new(bot_configs.path_finder.clone())))),
         _ => Err(String::from("Bot is not found")),
     }
 }
@@ -167,11 +257,13 @@ pub struct SessionData {
     last_update: i64,
     world: WorldData,
     player: PlayerData,
+    bot_id_counter: i64,
     bots: Vec<BotParams>,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 struct BotParams {
+    id: i64,
     name: String,
     params: Vec<u8>,
 }

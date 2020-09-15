@@ -1,0 +1,25 @@
+---
+bind_addr: "127.0.0.1:8080"
+map_db_path: var/map.db
+map_cache_ttl: 10
+session:
+  world:
+    report_iterations: 100000
+    found_transition_color: [ 1.0, 1.0, 1.0, 0.2 ]
+    path_transition_color: [ 0.6, 0.8, 0.6, 0.8 ]
+    shorten_path_transition_color: [ 0.4, 0.8, 0.4, 0.9 ]
+    direct_path_transition_color: [ 0.8, 0.4, 0.2, 0.9 ]
+    water_tiles:
+      gfx/tiles/deep: 1
+      gfx/tiles/odeep: 1
+      gfx/tiles/owater: 3
+      gfx/tiles/water: 3
+  bots:
+    path_finder:
+      find_path_max_shortcut_length: 25
+      find_path_max_iterations: 1000000
+      max_next_point_shortcut_length: 50
+    explorer:
+      find_path_max_shortcut_length: 25
+      find_path_max_iterations: 1000000
+      max_next_point_shortcut_length: 50
