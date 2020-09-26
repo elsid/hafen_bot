@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicBool;
 
 use serde::Deserialize;
 
@@ -22,15 +23,17 @@ pub struct PathFinder {
     tile_pos_path: VecDeque<Vec2i>,
     find_path_layer: Option<Layer>,
     config: PathFinderConfig,
+    cancel: Arc<AtomicBool>,
 }
 
 impl PathFinder {
-    pub fn new(config: PathFinderConfig) -> Self {
+    pub fn new(config: PathFinderConfig, cancel: Arc<AtomicBool>) -> Self {
         Self {
             destination: None,
             tile_pos_path: VecDeque::new(),
             find_path_layer: None,
             config,
+            cancel,
         }
     }
 }
@@ -80,6 +83,7 @@ impl Bot for PathFinder {
                     self.config.find_path_max_shortcut_length,
                     self.config.find_path_max_iterations,
                     &find_path_node,
+                    &self.cancel,
                 ));
                 if self.tile_pos_path.is_empty() {
                     debug!("PathFinder: path from {:?} to {:?} is not found by tiles {:?}",

@@ -1,5 +1,6 @@
 use std::collections::{BinaryHeap, BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use graphics::{Line, Rectangle, Transformed};
 use graphics::math::identity;
@@ -266,7 +267,7 @@ impl<'a> PlayerWorld<'a> {
 
     pub fn find_path(&self, src_tile_pos: Vec2i, dst_tile_pos: Vec2i, weights: &impl TileWeights,
                      max_shortcut_length: f64, max_iterations: usize,
-                     node: &Arc<Mutex<Node>>) -> Vec<Vec2i> {
+                     node: &Arc<Mutex<Node>>, cancel: &Arc<AtomicBool>) -> Vec<Vec2i> {
         if src_tile_pos == dst_tile_pos {
             return vec![dst_tile_pos];
         }
@@ -277,7 +278,7 @@ impl<'a> PlayerWorld<'a> {
             &self.config.shorten_path_transition_color,
         );
         transitions.add_direct_path(src_tile_pos, dst_tile_pos);
-        let path = self.find_reversed_tiles_path(src_tile_pos, dst_tile_pos, weights, max_iterations, &mut transitions);
+        let path = self.find_reversed_tiles_path(src_tile_pos, dst_tile_pos, weights, max_iterations, &mut transitions, cancel);
         transitions.add_path(src_tile_pos, &path, true, self.config.path_transition_color);
         let shorten_path = self.shorten_reversed_tiles_path(path, weights, max_shortcut_length);
         transitions.add_shorten_path(src_tile_pos, &shorten_path);
@@ -286,7 +287,7 @@ impl<'a> PlayerWorld<'a> {
 
     fn find_reversed_tiles_path(&self, src_tile_pos: Vec2i, dst_tile_pos: Vec2i,
                                 weights: &impl TileWeights, max_iterations: usize,
-                                transitions: &mut Transitions) -> Vec<Vec2i> {
+                                transitions: &mut Transitions, cancel: &Arc<AtomicBool>) -> Vec<Vec2i> {
         let mut ordered = BinaryHeap::new();
         let mut costs: BTreeMap<Vec2i, f64> = BTreeMap::new();
         let mut backtrack = BTreeMap::new();
@@ -334,9 +335,12 @@ impl<'a> PlayerWorld<'a> {
                        iterations, ordered.len(), costs.len(), push_count, min_distance);
                 return reconstruct_path(src_tile_pos, dst_tile_pos, backtrack);
             }
+            if cancel.load(Ordering::Relaxed) {
+                debug!("find_reversed_tiles_path cancelled");
+                break;
+            }
             if iterations >= max_iterations {
-                debug!("find_reversed_tiles_path not found iterations={} ordered={} costs={} push_count={} min_distance={}",
-                       iterations, ordered.len(), costs.len(), push_count, min_distance);
+                debug!("find_reversed_tiles_path reached max iterations");
                 break;
             }
             open_set.remove(&tile_pos);
@@ -383,6 +387,9 @@ impl<'a> PlayerWorld<'a> {
                        iterations, ordered.len(), costs.len(), push_count, min_distance);
             }
         }
+
+        debug!("find_reversed_tiles_path not found iterations={} ordered={} costs={} push_count={} min_distance={}",
+               iterations, ordered.len(), costs.len(), push_count, min_distance);
 
         Vec::new()
     }

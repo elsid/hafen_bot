@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, RwLock};
+use std::sync::atomic::AtomicBool;
 
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +37,7 @@ pub struct Session {
     scene: Scene,
     messages: Arc<Mutex<VecDeque<Message>>>,
     bot_configs: BotConfigs,
+    cancel: Arc<AtomicBool>,
 }
 
 struct BotWithParams {
@@ -46,7 +48,7 @@ struct BotWithParams {
 }
 
 impl Session {
-    pub fn new(id: i64, map_db: Arc<Mutex<dyn MapDb + Send>>, config: &SessionConfig) -> Self {
+    pub fn new(id: i64, map_db: Arc<Mutex<dyn MapDb + Send>>, config: &SessionConfig, cancel: Arc<AtomicBool>) -> Self {
         Self {
             id,
             last_update: 0,
@@ -57,11 +59,12 @@ impl Session {
             scene: Scene::new(),
             messages: Arc::new(Mutex::new(VecDeque::new())),
             bot_configs: config.bots.clone(),
+            cancel,
         }
     }
 
     pub fn from_session_data(session_data: SessionData, map_db: Arc<Mutex<dyn MapDb + Send>>,
-                             config: &SessionConfig) -> Result<Self, String> {
+                             config: &SessionConfig, cancel: Arc<AtomicBool>) -> Result<Self, String> {
         Ok(Self {
             id: session_data.id,
             last_update: 0,
@@ -72,7 +75,7 @@ impl Session {
                 for bot in session_data.bots.into_iter() {
                     bots.push(Arc::new(RwLock::new(BotWithParams {
                         id: bot.id,
-                        value: make_bot(bot.name.as_str(), bot.params.as_slice(), &config.bots)?,
+                        value: make_bot(bot.name.as_str(), bot.params.as_slice(), &config.bots, &cancel)?,
                         name: bot.name,
                         params: bot.params,
                     })));
@@ -83,6 +86,7 @@ impl Session {
             scene: Scene::new(),
             messages: Arc::new(Mutex::new(VecDeque::new())),
             bot_configs: config.bots.clone(),
+            cancel,
         })
     }
 
@@ -124,7 +128,7 @@ impl Session {
             id,
             name: String::from(name),
             params: Vec::from(params),
-            value: make_bot(name, params, &self.bot_configs)?,
+            value: make_bot(name, params, &self.bot_configs, &self.cancel)?,
         })));
         if let Some(game_ui_id) = self.player.game_ui_id() {
             self.messages.lock().unwrap().push_back(Message::UIMessage {
@@ -236,9 +240,9 @@ impl Session {
     }
 }
 
-fn make_bot(name: &str, params: &[u8], bot_configs: &BotConfigs) -> Result<Arc<Mutex<dyn Bot>>, String> {
+fn make_bot(name: &str, params: &[u8], bot_configs: &BotConfigs, cancel: &Arc<AtomicBool>) -> Result<Arc<Mutex<dyn Bot>>, String> {
     match name {
-        "Explorer" => Ok(Arc::new(Mutex::new(Explorer::new(bot_configs.explorer.clone())))),
+        "Explorer" => Ok(Arc::new(Mutex::new(Explorer::new(bot_configs.explorer.clone(), cancel.clone())))),
         "ExpWndCloser" => Ok(Arc::new(Mutex::new(ExpWndCloser::new()))),
         "NewCharacter" => {
             match serde_json::from_slice::<NewCharacterParams>(params) {
@@ -246,7 +250,7 @@ fn make_bot(name: &str, params: &[u8], bot_configs: &BotConfigs) -> Result<Arc<M
                 Err(e) => Err(format!("Failed to parse {} bot params: {}", name, e)),
             }
         }
-        "PathFinder" => Ok(Arc::new(Mutex::new(PathFinder::new(bot_configs.path_finder.clone())))),
+        "PathFinder" => Ok(Arc::new(Mutex::new(PathFinder::new(bot_configs.path_finder.clone(), cancel.clone())))),
         _ => Err(String::from("Bot is not found")),
     }
 }

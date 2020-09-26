@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -30,6 +31,7 @@ struct State {
     processors: Arc<Mutex<HashMap<i64, JoinHandle<()>>>>,
     visualizers: Arc<Mutex<HashMap<i64, Arc<Mutex<Vec<JoinHandle<()>>>>>>>,
     map_db: Arc<Mutex<dyn MapDb + Send>>,
+    cancels: Arc<Mutex<HashMap<i64, Arc<AtomicBool>>>>,
     session_config: SessionConfig,
 }
 
@@ -46,6 +48,7 @@ pub fn run_server(config: ServerConfig) -> std::io::Result<Server> {
             Connection::open(config.map_db_path).unwrap(),
             Duration::from_secs_f64(config.map_cache_ttl),
         ))),
+        cancels: Arc::new(Mutex::new(HashMap::new())),
         session_config: config.session,
     };
 
@@ -63,6 +66,7 @@ pub fn run_server(config: ServerConfig) -> std::io::Result<Server> {
             .service(web::resource("/set_session").route(web::get().to(set_session)))
             .service(web::resource("/get_session").route(web::get().to(get_session)))
             .service(web::resource("/add_visualization").route(web::get().to(add_visualization)))
+            .service(web::resource("/cancel").route(web::post().to(cancel)))
             .default_service(web::resource("").to(HttpResponse::NotFound))
     })
         .bind(config.bind_addr)?
@@ -98,11 +102,15 @@ async fn push(state: web::Data<State>, payload: web::Payload) -> Result<HttpResp
         }
     };
     let session_id = update.session;
-    let new_session = match &update.event {
+    let (new_session, cancel) = match &update.event {
         Event::SessionData { value: Some(value) } => {
             match serde_json::from_str(&value) {
                 Ok(v) => {
-                    match Session::from_session_data(v, state.map_db.clone(), &state.session_config) {
+                    let cancel = state.cancels.lock().unwrap()
+                        .entry(session_id)
+                        .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+                        .clone();
+                    match Session::from_session_data(v, state.map_db.clone(), &state.session_config, cancel.clone()) {
                         Ok(v) => {
                             if let Some(session) = state.sessions.lock().unwrap().get(&session_id).map(Arc::clone) {
                                 info!("Set session data {}", session_id);
@@ -110,7 +118,7 @@ async fn push(state: web::Data<State>, payload: web::Payload) -> Result<HttpResp
                                 return Ok(HttpResponse::Ok().json(&Message::Ok));
                             } else {
                                 info!("Use session data {}", session_id);
-                                v
+                                (v, cancel)
                             }
                         }
                         Err(e) => {
@@ -125,12 +133,22 @@ async fn push(state: web::Data<State>, payload: web::Payload) -> Result<HttpResp
                 }
             }
         }
+        Event::Cancel => {
+            state.cancels.lock().unwrap()
+                .get(&session_id)
+                .map(|cancel| cancel.store(true, Ordering::Relaxed));
+            return Ok(HttpResponse::Ok().json(&Message::Ok));
+        }
         _ => if let Some(updates) = state.updates.lock().unwrap().get(&session_id).map(Arc::clone) {
             push_update(&updates, update);
             return Ok(HttpResponse::Ok().json(&Message::Ok));
         } else {
+            let cancel = state.cancels.lock().unwrap()
+                .entry(session_id)
+                .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+                .clone();
             info!("Create new session {}", session_id);
-            Session::new(session_id, state.map_db.clone(), &state.session_config)
+            (Session::new(session_id, state.map_db.clone(), &state.session_config, cancel.clone()), cancel)
         },
     };
     let session = state.sessions.lock().unwrap()
@@ -156,7 +174,7 @@ async fn push(state: web::Data<State>, payload: web::Payload) -> Result<HttpResp
         .entry(session_id)
         .or_insert_with(|| {
             start_process_session(session_id, session, updates, messages, visualizers,
-                                  state.map_db.clone())
+                                  state.map_db.clone(), cancel)
         });
     Ok(HttpResponse::Ok().json(&Message::Ok))
 }
@@ -196,7 +214,11 @@ async fn add_bot(state: web::Data<State>, query: web::Query<AddBot>, payload: we
             })
             .unwrap_or_else(|| {
                 let session_id = query.session;
-                let new_session = Session::new(session_id, state.map_db.clone(), &state.session_config);
+                let cancel = state.cancels.lock().unwrap()
+                    .entry(session_id)
+                    .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+                    .clone();
+                let new_session = Session::new(session_id, state.map_db.clone(), &state.session_config, cancel.clone());
                 let session = state.sessions.lock().unwrap()
                     .entry(session_id)
                     .or_insert_with(|| Arc::new(RwLock::new(new_session)))
@@ -217,7 +239,7 @@ async fn add_bot(state: web::Data<State>, query: web::Query<AddBot>, payload: we
                     .entry(session_id)
                     .or_insert_with(|| {
                         start_process_session(session_id, session, updates, messages, visualizers,
-                                              state.map_db.clone())
+                                              state.map_db.clone(), cancel)
                     });
                 Message::Ok
             })
@@ -301,7 +323,11 @@ async fn set_session(state: web::Data<State>, query: web::Query<SetSession>, pay
             return Ok(HttpResponse::Ok().json(&Message::Error { message: String::from("Failed to parse session data") }));
         }
     };
-    let session = match Session::from_session_data(session_data, state.map_db.clone(), &state.session_config) {
+    let cancel = state.cancels.lock().unwrap()
+        .entry(query.session)
+        .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+        .clone();
+    let session = match Session::from_session_data(session_data, state.map_db.clone(), &state.session_config, cancel) {
         Ok(v) => v,
         Err(e) => {
             error!("Failed to create session from data: {}", e);
@@ -367,6 +393,23 @@ async fn add_visualization(state: web::Data<State>, query: web::Query<AddVisuali
             .map(|(session, updates, messages, visualizers)| {
                 add_session_visualization(session_id, &session, &updates, &messages, &visualizers,
                                           state.map_db.clone());
+                Message::Ok
+            })
+            .unwrap_or_else(|| Message::Error { message: String::from("Session is not found") })
+    )
+}
+
+#[derive(Deserialize)]
+struct Cancel {
+    session: i64,
+}
+
+async fn cancel(state: web::Data<State>, query: web::Query<Cancel>) -> HttpResponse {
+    HttpResponse::Ok().json(
+        state.cancels.lock().unwrap()
+            .get(&query.session)
+            .map(|cancel| {
+                cancel.store(true, Ordering::Relaxed);
                 Message::Ok
             })
             .unwrap_or_else(|| Message::Error { message: String::from("Session is not found") })
