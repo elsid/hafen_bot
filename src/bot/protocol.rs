@@ -80,6 +80,7 @@ pub enum Event {
     VisualizationAdd,
     SessionData { value: Option<String> },
     GetSessionData,
+    Cancel,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialOrd, PartialEq)]

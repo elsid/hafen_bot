@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{JoinHandle, spawn};
 
 use crate::bot::map_db::MapDb;
@@ -9,14 +10,14 @@ use crate::bot::visualization::start_visualize_session;
 
 pub fn start_process_session(session_id: i64, session: Arc<RwLock<Session>>, updates: Arc<UpdatesQueue>,
                              messages: Arc<Mutex<VecDeque<Message>>>,
-                             visualizers: Arc<Mutex<Vec<JoinHandle<()>>>>,
-                             map_db: Arc<Mutex<dyn MapDb + Send>>) -> JoinHandle<()> {
-    spawn(move || process_session(session_id, session, updates, messages, visualizers, map_db))
+                             visualizers: Arc<Mutex<Vec<JoinHandle<()>>>>, map_db: Arc<Mutex<dyn MapDb + Send>>,
+                             cancel: Arc<AtomicBool>) -> JoinHandle<()> {
+    spawn(move || process_session(session_id, session, updates, messages, visualizers, map_db, cancel))
 }
 
 fn process_session(session_id: i64, session: Arc<RwLock<Session>>, updates: Arc<UpdatesQueue>,
                    messages: Arc<Mutex<VecDeque<Message>>>, visualizers: Arc<Mutex<Vec<JoinHandle<()>>>>,
-                   map_db: Arc<Mutex<dyn MapDb + Send>>) {
+                   map_db: Arc<Mutex<dyn MapDb + Send>>, cancel: Arc<AtomicBool>) {
     info!("Start process session {}", session_id);
     messages.lock().unwrap().push_back(Message::GetSessionData);
     loop {
@@ -43,6 +44,7 @@ fn process_session(session_id: i64, session: Arc<RwLock<Session>>, updates: Arc<
                 locked_messages.push_back(next_message);
             }
         }
+        cancel.store(false, Ordering::Relaxed);
     }
     info!("Stop process session {}", session_id);
 }

@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, RwLock};
+use std::sync::atomic::AtomicBool;
 
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +37,7 @@ pub struct Session {
     scene: Scene,
     messages: Arc<Mutex<VecDeque<Message>>>,
     task_configs: TaskConfigs,
+    cancel: Arc<AtomicBool>,
 }
 
 struct TaskWithParams {
@@ -46,7 +48,7 @@ struct TaskWithParams {
 }
 
 impl Session {
-    pub fn new(id: i64, map_db: Arc<Mutex<dyn MapDb + Send>>, config: &SessionConfig) -> Self {
+    pub fn new(id: i64, map_db: Arc<Mutex<dyn MapDb + Send>>, config: &SessionConfig, cancel: Arc<AtomicBool>) -> Self {
         Self {
             id,
             last_update: 0,
@@ -57,11 +59,12 @@ impl Session {
             scene: Scene::new(),
             messages: Arc::new(Mutex::new(VecDeque::new())),
             task_configs: config.tasks.clone(),
+            cancel,
         }
     }
 
     pub fn from_session_data(session_data: SessionData, map_db: Arc<Mutex<dyn MapDb + Send>>,
-                             config: &SessionConfig) -> Result<Self, String> {
+                             config: &SessionConfig, cancel: Arc<AtomicBool>) -> Result<Self, String> {
         Ok(Self {
             id: session_data.id,
             last_update: 0,
@@ -72,7 +75,7 @@ impl Session {
                 for task in session_data.tasks.into_iter() {
                     tasks.push(Arc::new(RwLock::new(TaskWithParams {
                         id: task.id,
-                        value: make_task(task.name.as_str(), task.params.as_slice(), &config.tasks)?,
+                        value: make_task(task.name.as_str(), task.params.as_slice(), &config.tasks, &cancel)?,
                         name: task.name,
                         params: task.params,
                     })));
@@ -83,6 +86,7 @@ impl Session {
             scene: Scene::new(),
             messages: Arc::new(Mutex::new(VecDeque::new())),
             task_configs: config.tasks.clone(),
+            cancel,
         })
     }
 
@@ -124,7 +128,7 @@ impl Session {
             id,
             name: String::from(name),
             params: Vec::from(params),
-            value: make_task(name, params, &self.task_configs)?,
+            value: make_task(name, params, &self.task_configs, &self.cancel)?,
         })));
         if let Some(game_ui_id) = self.player.game_ui_id() {
             self.messages.lock().unwrap().push_back(Message::UIMessage {
@@ -240,9 +244,9 @@ impl Session {
     }
 }
 
-fn make_task(name: &str, params: &[u8], task_configs: &TaskConfigs) -> Result<Arc<Mutex<dyn Task>>, String> {
+fn make_task(name: &str, params: &[u8], bot_configs: &TaskConfigs, cancel: &Arc<AtomicBool>) -> Result<Arc<Mutex<dyn Task>>, String> {
     match name {
-        "Explorer" => Ok(Arc::new(Mutex::new(Explorer::new(task_configs.explorer.clone())))),
+        "Explorer" => Ok(Arc::new(Mutex::new(Explorer::new(bot_configs.explorer.clone(), cancel.clone())))),
         "ExpWndCloser" => Ok(Arc::new(Mutex::new(ExpWndCloser::new()))),
         "NewCharacter" => {
             match serde_json::from_slice::<NewCharacterParams>(params) {
@@ -250,7 +254,7 @@ fn make_task(name: &str, params: &[u8], task_configs: &TaskConfigs) -> Result<Ar
                 Err(e) => Err(format!("Failed to parse {} bot params: {}", name, e)),
             }
         }
-        "PathFinder" => Ok(Arc::new(Mutex::new(PathFinder::new(task_configs.path_finder.clone())))),
+        "PathFinder" => Ok(Arc::new(Mutex::new(PathFinder::new(bot_configs.path_finder.clone(), cancel.clone())))),
         _ => Err(String::from("Task is not found")),
     }
 }

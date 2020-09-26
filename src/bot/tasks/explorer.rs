@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use graphics::{Rectangle, Transformed};
 use graphics::math::identity;
@@ -28,16 +29,18 @@ pub struct Explorer {
     find_path_layer: Option<Layer>,
     border_tiles_layer: Option<Layer>,
     config: ExplorerConfig,
+    cancel: Arc<AtomicBool>,
 }
 
 impl Explorer {
-    pub fn new(config: ExplorerConfig) -> Self {
+    pub fn new(config: ExplorerConfig, cancel: Arc<AtomicBool>) -> Self {
         Self {
             border_tiles: Vec::new(),
             tile_pos_path: VecDeque::new(),
             find_path_layer: None,
             border_tiles_layer: None,
             config,
+            cancel,
         }
     }
 }
@@ -82,7 +85,12 @@ impl Task for Explorer {
                 self.config.find_path_max_shortcut_length,
                 self.config.find_path_max_iterations,
                 &find_path_node,
+                &self.cancel,
             ));
+            if self.cancel.load(Ordering::Relaxed) {
+                self.border_tiles.clear();
+                break;
+            }
             if !self.tile_pos_path.is_empty() {
                 debug!("Explorer: found path from {:?} to {:?} by tiles {:?}: {:?}",
                        src_tile_pos, dst_tile_pos, water_tiles_cost, self.tile_pos_path);
