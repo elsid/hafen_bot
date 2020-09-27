@@ -1,14 +1,7 @@
-#![feature(duration_saturating_ops)]
-#![feature(duration_zero)]
-
-#[macro_use]
-extern crate hexf;
 #[macro_use]
 extern crate log;
 
-use self::bot::{read_config, run_server};
-
-mod bot;
+use hafen_bot::bot::{read_config, run_server};
 
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
