@@ -216,10 +216,11 @@ impl Session {
         updated
     }
 
+    pub fn get_existing_message(&self) -> Option<Message> {
+        self.messages.lock().unwrap().pop_front()
+    }
+
     pub fn get_next_message(&self) -> Option<Message> {
-        if let Some(message) = self.messages.lock().unwrap().pop_front() {
-            return Some(message);
-        }
         if let Some(world) = self.world.for_player(&self.player) {
             let mut message = None;
             for task in self.tasks.read().unwrap().iter().map(Arc::clone) {

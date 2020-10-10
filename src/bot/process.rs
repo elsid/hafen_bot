@@ -58,11 +58,18 @@ fn process_session(session_id: i64, session: Arc<RwLock<Session>>, updates: Arc<
         if session.write().unwrap().update(update) {
             debug!("Session {} is updated", session_id);
         }
-        if let Some(next_message) = session.read().unwrap().get_next_message() {
+        while let Some(message) = session.read().unwrap().get_existing_message() {
             let mut locked_messages = messages.lock().unwrap();
-            if locked_messages.is_empty() || *locked_messages.back().unwrap() != next_message {
-                debug!("Add next message for session {}: {:?}", session_id, next_message);
-                locked_messages.push_back(next_message);
+            if locked_messages.is_empty() || *locked_messages.back().unwrap() != message {
+                debug!("Add next message for session {}: {:?}", session_id, message);
+                locked_messages.push_back(message);
+            }
+        }
+        if let Some(message) = session.read().unwrap().get_next_message() {
+            let mut locked_messages = messages.lock().unwrap();
+            if locked_messages.is_empty() || *locked_messages.back().unwrap() != message {
+                debug!("Add next message for session {}: {:?}", session_id, message);
+                locked_messages.push_back(message);
             }
         }
         cancel.store(false, Ordering::Relaxed);
