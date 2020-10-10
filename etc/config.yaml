@@ -2,6 +2,9 @@
 bind_addr: "127.0.0.1:8080"
 map_db_path: var/map.db
 map_cache_ttl: 10
+process:
+  sessions_path: var/sessions
+  write_updates_log: false
 session:
   world:
     report_iterations: 100000

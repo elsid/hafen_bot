@@ -1,27 +1,48 @@
 use std::collections::VecDeque;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{channel, Receiver};
 use std::thread::{JoinHandle, spawn};
+
+use serde::Deserialize;
 
 use crate::bot::map_db::MapDb;
 use crate::bot::protocol::{Event, Message, Update};
 use crate::bot::session::Session;
 use crate::bot::visualization::start_visualize_session;
 
+#[derive(Clone, Deserialize)]
+pub struct ProcessConfig {
+    pub sessions_path: String,
+    pub write_updates_log: bool,
+}
+
 pub fn start_process_session(session_id: i64, session: Arc<RwLock<Session>>, updates: Arc<UpdatesQueue>,
                              messages: Arc<Mutex<VecDeque<Message>>>,
                              visualizers: Arc<Mutex<Vec<JoinHandle<()>>>>, map_db: Arc<Mutex<dyn MapDb + Send>>,
-                             cancel: Arc<AtomicBool>) -> JoinHandle<()> {
-    spawn(move || process_session(session_id, session, updates, messages, visualizers, map_db, cancel))
+                             cancel: Arc<AtomicBool>, config: ProcessConfig) -> JoinHandle<()> {
+    spawn(move || process_session(session_id, session, updates, messages, visualizers, map_db, cancel, config))
 }
 
 fn process_session(session_id: i64, session: Arc<RwLock<Session>>, updates: Arc<UpdatesQueue>,
                    messages: Arc<Mutex<VecDeque<Message>>>, visualizers: Arc<Mutex<Vec<JoinHandle<()>>>>,
-                   map_db: Arc<Mutex<dyn MapDb + Send>>, cancel: Arc<AtomicBool>) {
+                   map_db: Arc<Mutex<dyn MapDb + Send>>, cancel: Arc<AtomicBool>, config: ProcessConfig) {
     info!("Start process session {}", session_id);
     messages.lock().unwrap().push_back(Message::GetSessionData);
+    let (updates_sender, updates_writer) = if config.write_updates_log {
+        let (sender, receiver) = channel();
+        let sessions_path = config.sessions_path.clone();
+        (Some(sender), Some(spawn(move || write_updates(session_id, receiver, sessions_path))))
+    } else {
+        (None, None)
+    };
     loop {
         let update = poll_update(&updates);
+        if let Some(sender) = updates_sender.as_ref() {
+            sender.send(Some(update.clone())).unwrap();
+        }
         match &update.event {
             Event::Close => break,
             Event::VisualizationAdd => {
@@ -46,7 +67,46 @@ fn process_session(session_id: i64, session: Arc<RwLock<Session>>, updates: Arc<
         }
         cancel.store(false, Ordering::Relaxed);
     }
+    if let Some(sender) = updates_sender.as_ref() {
+        sender.send(None).unwrap();
+    }
+    if let Some(writer) = updates_writer {
+        writer.join().unwrap();
+    }
     info!("Stop process session {}", session_id);
+}
+
+fn write_updates(session_id: i64, receiver: Receiver<Option<Update>>, path: String) {
+    match std::fs::create_dir_all(&path) {
+        Ok(_) => (),
+        Err(e) => {
+            error!("Failed to create dir {}: {}", path, e);
+            return;
+        }
+    }
+    let mut file = match OpenOptions::new().create(true).append(true).open(format!("{}/{}.json", path, session_id)) {
+        Ok(v) => v,
+        Err(e) => {
+            error!("Failed open updates log for session {}: {}", session_id, e);
+            return;
+        }
+    };
+    while let Some(update) = receiver.recv().unwrap() {
+        match file.write(&serde_json::to_vec(&update).unwrap()) {
+            Ok(_) => (),
+            Err(e) => {
+                error!("Failed to write update for session {}: {}", session_id, e);
+                break;
+            }
+        }
+        match file.write(b"\n") {
+            Ok(_) => (),
+            Err(e) => {
+                error!("Failed to write update for session {}: {}", session_id, e);
+                break;
+            }
+        }
+    }
 }
 
 pub struct UpdatesQueue {

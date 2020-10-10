@@ -4,14 +4,14 @@ use crate::bot::map::GridNeighbour;
 use crate::bot::session::SessionData;
 use crate::bot::vec2::{Vec2f, Vec2i};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Update {
     pub session: i64,
     pub number: i64,
     pub event: Event,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub enum Event {
     NewWidget {
@@ -83,7 +83,7 @@ pub enum Event {
     Cancel,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialOrd, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialOrd, PartialEq, Clone)]
 #[serde(tag = "type")]
 pub enum Value {
     Nil,
@@ -154,7 +154,7 @@ pub enum Message {
     GetSessionData,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialOrd, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialOrd, PartialEq, Clone)]
 pub struct Color {
     pub r: i32,
     pub g: i32,
@@ -182,7 +182,7 @@ pub struct SessionInfo {
     pub messages: usize,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MapGrid {
     pub id: i64,
     pub position: Vec2i,
