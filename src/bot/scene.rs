@@ -80,7 +80,7 @@ pub enum Node {
     Rectangle(RectangleNode),
     Ellipse(EllipseNode),
     Text(TextNode),
-    Line(LineNode),
+    FixedScaleLine(FixedScaleLineNode),
     Arrow(ArrowNode),
     Image(ImageNode),
     Polygon(PolygonNode),
@@ -100,7 +100,7 @@ impl Node {
             Node::Rectangle(v) => v.draw(context, transform, g),
             Node::Ellipse(v) => v.draw(context, transform, g),
             Node::Text(v) => v.draw(context, transform, cache, g),
-            Node::Line(v) => v.draw(context, transform, g),
+            Node::FixedScaleLine(v) => v.draw(context, transform, g),
             Node::Arrow(v) => v.draw(context, transform, g),
             Node::Image(v) => v.draw(context, transform, g),
             Node::Polygon(v) => v.draw(context, transform, g),
@@ -128,7 +128,7 @@ node_from_impl! { DebugTextNode, DebugText }
 node_from_impl! { RectangleNode, Rectangle }
 node_from_impl! { EllipseNode, Ellipse }
 node_from_impl! { TextNode, Text }
-node_from_impl! { LineNode, Line }
+node_from_impl! { FixedScaleLineNode, FixedScaleLine }
 node_from_impl! { ArrowNode, Arrow }
 node_from_impl! { ImageNode, Image }
 node_from_impl! { PolygonNode, Polygon }
@@ -327,15 +327,19 @@ impl TextNode {
     }
 }
 
-pub struct LineNode {
+pub struct FixedScaleLineNode {
     pub value: Line,
     pub line: types::Line,
     pub transform: Matrix2d,
 }
 
-impl LineNode {
+impl FixedScaleLineNode {
     fn draw(&self, context: &Context, transform: Matrix2d, g: &mut GlGraphics) -> usize {
-        self.value.draw(
+        Line {
+            color: self.value.color,
+            radius: self.value.radius / context.scale,
+            shape: self.value.shape,
+        }.draw(
             self.line,
             &context.base.draw_state,
             transform.append_transform(self.transform),

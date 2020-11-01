@@ -109,7 +109,7 @@ impl Map {
         let grid_pos = tile_pos_to_grid_pos(tile_pos);
         if let Some(grid) = self.get_grid(segment_id, grid_pos) {
             let relative_tile_pos = tile_pos_to_relative_tile_pos(tile_pos, grid_pos);
-            return Some(grid.tiles[get_grid_tile_index(relative_tile_pos)]);
+            return Some(grid.tiles[tile_pos_to_tile_index(relative_tile_pos)]);
         }
         self.grids.get(&segment_id).and_then(|local_grid| {
             let db = self.db.lock().unwrap();
@@ -120,9 +120,9 @@ impl Map {
                 db.get_grid(locked_db_grid.segment_id, position).map(|grid| {
                     let relative_tile_pos = tile_pos_to_relative_tile_pos(tile_pos + grid_pos_to_tile_pos(shift), position);
                     if Arc::as_ptr(&db_grid) == Arc::as_ptr(&grid) {
-                        locked_db_grid.tiles[get_grid_tile_index(relative_tile_pos)]
+                        locked_db_grid.tiles[tile_pos_to_tile_index(relative_tile_pos)]
                     } else {
-                        grid.lock().unwrap().tiles[get_grid_tile_index(relative_tile_pos)]
+                        grid.lock().unwrap().tiles[tile_pos_to_tile_index(relative_tile_pos)]
                     }
                 })
             })
@@ -160,7 +160,7 @@ impl Map {
                 if !segment_grids.contains_key(&(grid_pos - Vec2i::only_x(1))) {
                     for y in 0..GRID_SIZE {
                         let relative_tile_pos = Vec2i::only_y(y);
-                        let tile = grid.tiles[get_grid_tile_index(relative_tile_pos)];
+                        let tile = grid.tiles[tile_pos_to_tile_index(relative_tile_pos)];
                         if allowed_tiles.contains(tile) {
                             result.push(make_tile_pos(grid_pos, relative_tile_pos));
                         }
@@ -169,7 +169,7 @@ impl Map {
                 if !segment_grids.contains_key(&(grid_pos + Vec2i::only_x(1))) {
                     for y in 0..GRID_SIZE {
                         let relative_tile_pos = Vec2i::new(GRID_SIZE - 1, y);
-                        let tile = grid.tiles[get_grid_tile_index(relative_tile_pos)];
+                        let tile = grid.tiles[tile_pos_to_tile_index(relative_tile_pos)];
                         if allowed_tiles.contains(tile) {
                             result.push(make_tile_pos(grid_pos, relative_tile_pos));
                         }
@@ -178,7 +178,7 @@ impl Map {
                 if !segment_grids.contains_key(&(grid_pos - Vec2i::only_y(1))) {
                     for x in 0..GRID_SIZE {
                         let relative_tile_pos = Vec2i::new(x, 0);
-                        let tile = grid.tiles[get_grid_tile_index(relative_tile_pos)];
+                        let tile = grid.tiles[tile_pos_to_tile_index(relative_tile_pos)];
                         if allowed_tiles.contains(tile) {
                             result.push(make_tile_pos(grid_pos, relative_tile_pos));
                         }
@@ -187,7 +187,7 @@ impl Map {
                 if !segment_grids.contains_key(&(grid_pos + Vec2i::only_y(1))) {
                     for x in 0..GRID_SIZE {
                         let relative_tile_pos = Vec2i::new(x, GRID_SIZE - 1);
-                        let tile = grid.tiles[get_grid_tile_index(relative_tile_pos)];
+                        let tile = grid.tiles[tile_pos_to_tile_index(relative_tile_pos)];
                         if allowed_tiles.contains(tile) {
                             result.push(make_tile_pos(grid_pos, relative_tile_pos));
                         }
@@ -243,7 +243,7 @@ pub fn grid_pos_to_tile_pos(grid_pos: Vec2i) -> Vec2i {
     grid_pos * GRID_SIZE
 }
 
-fn get_grid_tile_index(tile_pos: Vec2i) -> usize {
+pub fn tile_pos_to_tile_index(tile_pos: Vec2i) -> usize {
     tile_pos.x() as usize + tile_pos.y() as usize * GRID_SIZE as usize
 }
 
@@ -285,6 +285,16 @@ pub struct Grid {
     pub position: Vec2i,
     pub heights: Vec<f32>,
     pub tiles: Vec<i32>,
+}
+
+impl Grid {
+    pub fn get_tile(&self, tile_pos: Vec2i) -> i32 {
+        self.tiles[tile_pos_to_tile_index(tile_pos)]
+    }
+
+    pub fn get_height(&self, tile_pos: Vec2i) -> f32 {
+        self.heights[tile_pos_to_tile_index(tile_pos)]
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq)]

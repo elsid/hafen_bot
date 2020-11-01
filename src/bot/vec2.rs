@@ -226,6 +226,26 @@ impl Vec2i {
     }
 
     #[inline(always)]
+    pub const fn left(&self) -> Self {
+        Self { x: -self.y, y: self.x }
+    }
+
+    #[inline(always)]
+    pub const fn right(&self) -> Self {
+        Self { x: self.y, y: -self.x }
+    }
+
+    #[inline(always)]
+    pub const fn abs(&self) -> Self {
+        Self { x: self.x.abs(), y: self.y.abs() }
+    }
+
+    #[inline(always)]
+    pub const fn signum(&self) -> Self {
+        Self { x: self.x.signum(), y: self.y.signum() }
+    }
+
+    #[inline(always)]
     pub fn center(&self) -> Vec2f {
         Vec2f::new(self.x as f64 + 0.5, self.y as f64 + 0.5)
     }
@@ -233,6 +253,11 @@ impl Vec2i {
     #[inline(always)]
     pub const fn floor_div_i32(&self, value: i32) -> Self {
         Self::new(floor_div_i32(self.x, value), floor_div_i32(self.y, value))
+    }
+
+    #[inline(always)]
+    pub const fn manhattan(&self) -> i32 {
+        self.x.abs() + self.y.abs()
     }
 }
 

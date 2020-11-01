@@ -6,7 +6,7 @@ use std::thread::{JoinHandle, spawn};
 use std::time::{Duration, Instant};
 
 use glutin_window::GlutinWindow;
-use graphics::{clear, Ellipse, Image, Rectangle, Transformed};
+use graphics::{clear, Ellipse, Image, Rectangle, Transformed, Line};
 use graphics::math::identity;
 use graphics::rectangle::{centered_square, square};
 use graphics::text::Text;
@@ -30,10 +30,11 @@ use crate::bot::map::{Grid, grid_pos_to_pos, GRID_SIZE, tile_index_to_tile_pos, 
 use crate::bot::map_db::MapDb;
 use crate::bot::process::{count_updates, UpdatesQueue};
 use crate::bot::protocol::Message;
-use crate::bot::scene::{CompositeVecNode, Context, DebugTextNode, EllipseNode, ImageNode, MapTransformBoxNode, Node, Scene, TextNode};
+use crate::bot::scene::{CompositeVecNode, Context, DebugTextNode, EllipseNode, ImageNode, MapTransformBoxNode, Node, Scene, TextNode, FixedScaleLineNode};
 use crate::bot::session::Session;
 use crate::bot::vec2::{Vec2f, Vec2i};
 use crate::bot::world::PlayerWorld;
+use crate::bot::navigator::make_areas;
 
 #[derive(Clone, Deserialize)]
 pub enum WindowType {
@@ -261,12 +262,21 @@ impl Visualizer<'_> {
     }
 }
 
-fn make_rgba_color(value: i32) -> [u8; 4] {
+fn make_rgba_color_u8(value: i32) -> [u8; 4] {
     [
         get_color_component(value, 2),
         get_color_component(value, 1),
         get_color_component(value, 0),
         get_color_component(value, 3),
+    ]
+}
+
+fn make_rgba_color_f32(value: i32) -> [f32; 4] {
+    [
+        get_color_component(value, 2) as f32 / 255.0,
+        get_color_component(value, 1) as f32 / 255.0,
+        get_color_component(value, 0) as f32 / 255.0,
+        get_color_component(value, 3) as f32 / 255.0,
     ]
 }
 
@@ -368,6 +378,22 @@ fn add_grid_node(grid: &Grid, shift: Vec2i, world: &PlayerWorld, grids: &mut Has
         texture: cached.value.clone(),
         transform: identity().trans(grid_position.x(), grid_position.y()),
     }));
+    let areas = make_areas(grid);
+    for area in areas.into_iter() {
+        let color: [f32; 4] = world.get_tile_by_id(area.tile)
+            .map(|tile| make_rgba_color_f32(tile.color))
+            .map(|color| [color[0] / 2.0, color[1] / 2.0, color[2] / 2.0, 0.9])
+            .unwrap_or([0.5, 0.5, 0.5, 0.9]);
+        for i in 0..area.border.len() {
+            let current = Vec2f::from(area.border[i]) * TILE_SIZE;
+            let next = Vec2f::from(area.border[(i + 1) % area.border.len()]) * TILE_SIZE;
+            nodes.push(Node::from(FixedScaleLineNode {
+                value: Line::new(color, 3.0),
+                line: [current.x() as f64, current.y() as f64, next.x() as f64, next.y() as f64],
+                transform: identity().trans(grid_position.x(), grid_position.y()),
+            }))
+        }
+    }
 }
 
 fn make_grid_texture(grid: &Grid, world: &PlayerWorld) -> GridTexture {
@@ -375,7 +401,7 @@ fn make_grid_texture(grid: &Grid, world: &PlayerWorld) -> GridTexture {
     for (index, tile_id) in grid.tiles.iter().enumerate() {
         let position = tile_index_to_tile_pos(index);
         let color = world.get_tile_by_id(*tile_id)
-            .map(|tile| make_rgba_color(tile.color))
+            .map(|tile| make_rgba_color_u8(tile.color))
             .unwrap_or([255, 255, 255, 255]);
         image.put_pixel(position.x() as u32, position.y() as u32, Rgba(color));
     }
