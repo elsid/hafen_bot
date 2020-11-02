@@ -18,6 +18,15 @@ session:
       gfx/tiles/odeep: 1
       gfx/tiles/owater: 3
       gfx/tiles/water: 3
+  player:
+    meters:
+      stamina: "gfx/hud/meter/stam"
+    equipment:
+      belt: 5
+    items:
+      content: "ui/tt/cont"
+      content_name: "ui/tt/cn"
+      quality: "ui/tt/q/quality"
   tasks:
     path_finder:
       find_path_max_shortcut_length: 25
@@ -27,3 +36,42 @@ session:
       find_path_max_shortcut_length: 25
       find_path_max_iterations: 1000000
       max_next_point_shortcut_length: 50
+    drinker:
+      open_belt_timeout: 1.0
+      sip_timeout: 1.0
+      max_stamina: 100
+      stamina_threshold: 95
+      liquid_containers:
+        - "gfx/invobjs/kuksa"
+        - "gfx/invobjs/kuksa-full"
+        - "gfx/invobjs/waterskin"
+        - "gfx/invobjs/waterflask"
+        - "gfx/invobjs/small/waterskin"
+      contents:
+        - name: "Milk"
+          action: "Sip"
+          wait_interval: 1
+        - name: "Wine"
+          action: "Sip"
+          wait_interval: 1
+        - name: "Weißbier"
+          action: "Sip"
+          wait_interval: 1
+        - name: "Beer"
+          action: "Sip"
+          wait_interval: 1
+        - name: "Cider"
+          action: "Sip"
+          wait_interval: 1
+        - name: "Perry"
+          action: "Sip"
+          wait_interval: 1
+        - name: "Mead"
+          action: "Sip"
+          wait_interval: 1
+        - name: "juice"
+          action: "Sip"
+          wait_interval: 1
+        - name: "Water"
+          action: "Drink"
+          wait_interval: 3
