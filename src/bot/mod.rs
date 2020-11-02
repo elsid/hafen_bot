@@ -22,3 +22,6 @@ mod visualization;
 mod scene;
 mod map_db;
 mod sqlite_map_db;
+mod drinker;
+mod use_item;
+mod open_belt;

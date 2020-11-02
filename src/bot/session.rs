@@ -5,12 +5,13 @@ use std::sync::atomic::AtomicBool;
 use serde::{Deserialize, Serialize};
 
 use crate::bot::bot::Bot;
+use crate::bot::drinker::{Drinker, DrinkerConfig};
 use crate::bot::exp_wnd_closer::ExpWndCloser;
 use crate::bot::explorer::{Explorer, ExplorerConfig};
 use crate::bot::map_db::MapDb;
 use crate::bot::new_character::{NewCharacter, NewCharacterParams};
 use crate::bot::path_finder::{PathFinder, PathFinderConfig};
-use crate::bot::player::{Player, PlayerData};
+use crate::bot::player::{Player, PlayerConfig, PlayerData};
 use crate::bot::protocol::{Event, Message, Update, Value};
 use crate::bot::scene::Scene;
 use crate::bot::world::{PlayerWorld, World, WorldConfig, WorldData};
@@ -18,6 +19,7 @@ use crate::bot::world::{PlayerWorld, World, WorldConfig, WorldData};
 #[derive(Clone, Deserialize)]
 pub struct SessionConfig {
     world: WorldConfig,
+    player: PlayerConfig,
     bots: BotConfigs,
 }
 
@@ -25,6 +27,7 @@ pub struct SessionConfig {
 pub struct BotConfigs {
     path_finder: PathFinderConfig,
     explorer: ExplorerConfig,
+    drinker: DrinkerConfig,
 }
 
 pub struct Session {
@@ -53,7 +56,7 @@ impl Session {
             id,
             last_update: 0,
             world: World::new(config.world.clone(), map_db),
-            player: Player::default(),
+            player: Player::new(config.player.clone()),
             bot_id_counter: 0,
             bots: Arc::new(RwLock::new(Vec::new())),
             scene: Scene::new(),
@@ -68,7 +71,7 @@ impl Session {
         Ok(Self {
             id: session_data.id,
             last_update: 0,
-            player: Player::from_player_data(session_data.player),
+            player: Player::from_player_data(session_data.player, config.player.clone()),
             bot_id_counter: session_data.bot_id_counter,
             bots: {
                 let mut bots = Vec::new();
@@ -252,6 +255,7 @@ fn make_bot(name: &str, params: &[u8], bot_configs: &BotConfigs, cancel: &Arc<At
             }
         }
         "PathFinder" => Ok(Arc::new(Mutex::new(PathFinder::new(bot_configs.path_finder.clone(), cancel.clone())))),
+        "Drinker" => Ok(Arc::new(Mutex::new(Drinker::new(bot_configs.drinker.clone())))),
         _ => Err(String::from("Bot is not found")),
     }
 }

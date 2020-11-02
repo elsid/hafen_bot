@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use serde::{Deserialize, Serialize};
 
 use crate::bot::map::GridNeighbour;
@@ -63,6 +65,11 @@ pub enum Event {
         id: i64,
         position: Vec2f,
         angle: f64,
+    },
+    ResourceAdd {
+        id: i32,
+        version: i32,
+        name: String,
     },
     WidgetMessage {
         id: i32,
@@ -131,6 +138,56 @@ value_from_impl! { Vec2f, FCoord64 }
 value_from_impl! { Vec<Value>, List }
 value_from_to_impl! { Button, i32, Int }
 value_from_to_impl! { Modifier, i32, Int }
+
+impl PartialEq<String> for Value {
+    fn eq(&self, other: &String) -> bool {
+        if let Value::Str { value } = self {
+            value == other
+        } else {
+            false
+        }
+    }
+}
+
+impl PartialEq<&str> for Value {
+    fn eq(&self, other: &&str) -> bool {
+        if let Value::Str { value } = self {
+            value == other
+        } else {
+            false
+        }
+    }
+}
+
+impl PartialEq<i32> for Value {
+    fn eq(&self, other: &i32) -> bool {
+        if let Value::Int { value } = self {
+            value == other
+        } else {
+            false
+        }
+    }
+}
+
+impl PartialOrd<i32> for Value {
+    fn partial_cmp(&self, other: &i32) -> Option<Ordering> {
+        if let Value::Int { value } = self {
+            value.partial_cmp(other)
+        } else {
+            None
+        }
+    }
+}
+
+impl PartialEq<&[&str]> for Value {
+    fn eq(&self, other: &&[&str]) -> bool {
+        if let Value::List { value } = self {
+            value == other
+        } else {
+            false
+        }
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(tag = "type")]

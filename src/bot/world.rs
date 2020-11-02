@@ -11,7 +11,7 @@ use crate::bot::map::{Grid, grid_pos_to_tile_pos, GridNeighbour, Map, MapData, p
 use crate::bot::map_db::MapDb;
 use crate::bot::math::as_score;
 use crate::bot::objects::{Object, Objects, ObjectsData};
-use crate::bot::player::{Player, Widget};
+use crate::bot::player::{Item, Player, PlayerEquipment, Resource, Widget};
 use crate::bot::protocol::{Event, MapGrid, Update};
 use crate::bot::scene::{ArrowNode, CompositeBTreeMapNode, insert_to_composite_node_btree_map, Node, RectangleNode, remove_from_composite_node_btree_map};
 use crate::bot::vec2::{Vec2f, Vec2i};
@@ -72,12 +72,16 @@ impl World {
             Some(player_name),
             Some(player_object_id),
             Some(player_grid_id),
+            Some(player_stamina),
+            Some(player_equipment),
         ) = (
             player.map_view_id(),
             player.game_ui_id(),
             player.name(),
             player.object_id(),
             player.grid_id(),
+            player.stamina(),
+            player.equipment(),
         ) {
             self.objects.get_by_id(player_object_id).map(|v| v.position)
                 .and_then(|player_position| {
@@ -98,8 +102,13 @@ impl World {
                                 player_segment_id,
                                 player_grid_offset,
                                 is_player_stuck: player.is_stuck(),
+                                player_stamina,
+                                player_inventory_items: player.inventory_items(),
+                                player_belt_items: player.belt_items(),
+                                player_equipment,
                                 objects: &self.objects,
                                 widgets: &player.widgets(),
+                                resources: &player.resources(),
                                 map: &self.map,
                                 config: &self.config,
                             }
@@ -183,8 +192,13 @@ pub struct PlayerWorld<'a> {
     player_segment_id: i64,
     player_grid_offset: Vec2i,
     is_player_stuck: bool,
+    player_stamina: i32,
+    player_inventory_items: &'a BTreeMap<i32, Item>,
+    player_belt_items: &'a BTreeMap<i32, Item>,
+    player_equipment: PlayerEquipment<'a>,
     widgets: &'a BTreeMap<i32, Widget>,
     objects: &'a Objects,
+    resources: &'a BTreeMap<i32, Resource>,
     map: &'a Map,
     config: &'a WorldConfig,
 }
@@ -220,6 +234,26 @@ impl<'a> PlayerWorld<'a> {
 
     pub fn is_player_stuck(&self) -> bool {
         self.is_player_stuck
+    }
+
+    pub fn player_stamina(&self) -> i32 {
+        self.player_stamina
+    }
+
+    pub fn player_inventory_items(&self) -> &BTreeMap<i32, Item> {
+        self.player_inventory_items
+    }
+
+    pub fn player_belt_items(&self) -> &BTreeMap<i32, Item> {
+        self.player_belt_items
+    }
+
+    pub fn player_equipment(&self) -> &PlayerEquipment {
+        &self.player_equipment
+    }
+
+    pub fn resources(&self) -> &BTreeMap<i32, Resource> {
+        self.resources
     }
 
     pub fn config(&self) -> &WorldConfig {
