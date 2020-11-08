@@ -16,6 +16,7 @@ use crate::bot::process::{add_session_visualization, count_updates, ProcessConfi
 use crate::bot::protocol::{Event, Message, SessionInfo, Update};
 use crate::bot::session::{Session, SessionConfig, SessionData};
 use crate::bot::sqlite_map_db::SqliteMapDb;
+use crate::bot::visualization::VisualizationConfig;
 
 #[derive(Clone)]
 struct State {
@@ -28,6 +29,7 @@ struct State {
     cancels: Arc<Mutex<HashMap<i64, Arc<AtomicBool>>>>,
     process_config: ProcessConfig,
     session_config: SessionConfig,
+    visualization_config: VisualizationConfig,
 }
 
 pub fn run_server(config: ServerConfig) -> std::io::Result<Server> {
@@ -46,6 +48,7 @@ pub fn run_server(config: ServerConfig) -> std::io::Result<Server> {
         cancels: Arc::new(Mutex::new(HashMap::new())),
         process_config: config.process,
         session_config: config.session,
+        visualization_config: config.visualization,
     };
 
     Ok(HttpServer::new(move || {
@@ -76,6 +79,7 @@ pub struct ServerConfig {
     map_cache_ttl: f64,
     process: ProcessConfig,
     session: SessionConfig,
+    visualization: VisualizationConfig,
 }
 
 pub fn read_config<T: AsRef<Path>>(path: T) -> std::io::Result<ServerConfig> {
@@ -171,7 +175,8 @@ async fn push(state: web::Data<State>, payload: web::Payload) -> Result<HttpResp
         .entry(session_id)
         .or_insert_with(|| {
             start_process_session(session_id, session, updates, messages, visualizers,
-                                  state.map_db.clone(), cancel, state.process_config.clone())
+                                  state.map_db.clone(), cancel, state.process_config.clone(),
+                                  state.visualization_config.clone())
         });
     Ok(HttpResponse::Ok().json(&Message::Ok))
 }
@@ -236,7 +241,8 @@ async fn add_bot(state: web::Data<State>, query: web::Query<AddBot>, payload: we
                     .entry(session_id)
                     .or_insert_with(|| {
                         start_process_session(session_id, session, updates, messages, visualizers,
-                                              state.map_db.clone(), cancel, state.process_config.clone())
+                                              state.map_db.clone(), cancel, state.process_config.clone(),
+                                              state.visualization_config.clone())
                     });
                 Message::Ok
             })
@@ -389,7 +395,7 @@ async fn add_visualization(state: web::Data<State>, query: web::Query<AddVisuali
             })
             .map(|(session, updates, messages, visualizers)| {
                 add_session_visualization(session_id, &session, &updates, &messages, &visualizers,
-                                          state.map_db.clone());
+                                          state.map_db.clone(), state.visualization_config.clone());
                 Message::Ok
             })
             .unwrap_or_else(|| Message::Error { message: String::from("Session is not found") })

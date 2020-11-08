@@ -11,7 +11,7 @@ use serde::Deserialize;
 use crate::bot::map_db::MapDb;
 use crate::bot::protocol::{Event, Message, Update};
 use crate::bot::session::Session;
-use crate::bot::visualization::start_visualize_session;
+use crate::bot::visualization::{start_visualize_session, VisualizationConfig};
 
 #[derive(Clone, Deserialize)]
 pub struct ProcessConfig {
@@ -22,13 +22,14 @@ pub struct ProcessConfig {
 pub fn start_process_session(session_id: i64, session: Arc<RwLock<Session>>, updates: Arc<UpdatesQueue>,
                              messages: Arc<Mutex<VecDeque<Message>>>,
                              visualizers: Arc<Mutex<Vec<JoinHandle<()>>>>, map_db: Arc<Mutex<dyn MapDb + Send>>,
-                             cancel: Arc<AtomicBool>, config: ProcessConfig) -> JoinHandle<()> {
-    spawn(move || process_session(session_id, session, updates, messages, visualizers, map_db, cancel, config))
+                             cancel: Arc<AtomicBool>, config: ProcessConfig, visualization_config: VisualizationConfig) -> JoinHandle<()> {
+    spawn(move || process_session(session_id, session, updates, messages, visualizers, map_db, cancel, config, visualization_config))
 }
 
 fn process_session(session_id: i64, session: Arc<RwLock<Session>>, updates: Arc<UpdatesQueue>,
                    messages: Arc<Mutex<VecDeque<Message>>>, visualizers: Arc<Mutex<Vec<JoinHandle<()>>>>,
-                   map_db: Arc<Mutex<dyn MapDb + Send>>, cancel: Arc<AtomicBool>, config: ProcessConfig) {
+                   map_db: Arc<Mutex<dyn MapDb + Send>>, cancel: Arc<AtomicBool>, config: ProcessConfig,
+                   visualization_config: VisualizationConfig) {
     info!("Start process session {}", session_id);
     messages.lock().unwrap().push_back(Message::GetSessionData);
     let (updates_sender, updates_writer) = if config.write_updates_log {
@@ -46,7 +47,8 @@ fn process_session(session_id: i64, session: Arc<RwLock<Session>>, updates: Arc<
         match &update.event {
             Event::Close => break,
             Event::VisualizationAdd => {
-                add_session_visualization(session_id, &session, &updates, &messages, &visualizers, map_db.clone());
+                add_session_visualization(session_id, &session, &updates, &messages, &visualizers,
+                                          map_db.clone(), visualization_config.clone());
             }
             Event::GetSessionData => {
                 let session_data = session.read().unwrap().as_session_data();
@@ -152,8 +154,8 @@ pub fn count_updates(updates: &Arc<UpdatesQueue>) -> usize {
 pub fn add_session_visualization(session_id: i64, session: &Arc<RwLock<Session>>, updates: &Arc<UpdatesQueue>,
                                  messages: &Arc<Mutex<VecDeque<Message>>>,
                                  visualizers: &Arc<Mutex<Vec<JoinHandle<()>>>>,
-                                 map_db: Arc<Mutex<dyn MapDb + Send>>) {
+                                 map_db: Arc<Mutex<dyn MapDb + Send>>, config: VisualizationConfig) {
     let scene = session.read().unwrap().scene().clone();
     visualizers.lock().unwrap()
-        .push(start_visualize_session(session_id, session.clone(), scene, updates.clone(), messages.clone(), map_db));
+        .push(start_visualize_session(session_id, session.clone(), scene, updates.clone(), messages.clone(), map_db, config));
 }

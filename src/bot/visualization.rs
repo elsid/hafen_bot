@@ -5,13 +5,14 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{JoinHandle, spawn};
 use std::time::{Duration, Instant};
 
+use glutin_window::GlutinWindow;
 use graphics::{clear, Ellipse, Image, Rectangle, Transformed};
 use graphics::math::identity;
 use graphics::rectangle::{centered_square, square};
 use graphics::text::Text;
 use image::{Rgba, RgbaImage};
 use opengl_graphics::{Filter, GlGraphics, GlyphCache, OpenGL, Texture, TextureSettings};
-use piston::{EventLoop, RenderArgs, RenderEvent, UpdateArgs, UpdateEvent};
+use piston::{EventLoop, RenderArgs, RenderEvent, UpdateArgs, UpdateEvent, Window};
 use piston::event_loop::{Events, EventSettings};
 use piston::input::{
     Button,
@@ -23,6 +24,7 @@ use piston::input::{
 };
 use piston::window::WindowSettings;
 use sdl2_window::Sdl2Window;
+use serde::Deserialize;
 
 use crate::bot::map::{Grid, grid_pos_to_pos, GRID_SIZE, tile_index_to_tile_pos, TILE_SIZE};
 use crate::bot::map_db::MapDb;
@@ -33,22 +35,47 @@ use crate::bot::session::Session;
 use crate::bot::vec2::{Vec2f, Vec2i};
 use crate::bot::world::PlayerWorld;
 
+#[derive(Clone, Deserialize)]
+pub enum WindowType {
+    Glutin,
+    SDL2,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct VisualizationConfig {
+    window_type: WindowType,
+}
+
 pub fn start_visualize_session(session_id: i64, session: Arc<RwLock<Session>>, scene: Scene,
                                updates: Arc<UpdatesQueue>, messages: Arc<Mutex<VecDeque<Message>>>,
-                               map_db: Arc<Mutex<dyn MapDb + Send>>) -> JoinHandle<()> {
-    spawn(move || visualize_session(session_id, session, scene.nodes(), updates, messages, map_db))
+                               map_db: Arc<Mutex<dyn MapDb + Send>>, config: VisualizationConfig) -> JoinHandle<()> {
+    spawn(move || visualize_session(session_id, session, scene.nodes(), updates, messages, map_db, config))
 }
 
 fn visualize_session(session_id: i64, session: Arc<RwLock<Session>>,
                      layers: Arc<Mutex<BTreeMap<usize, Arc<Mutex<Node>>>>>,
                      updates: Arc<UpdatesQueue>, messages: Arc<Mutex<VecDeque<Message>>>,
-                     map_db: Arc<Mutex<dyn MapDb + Send>>) {
+                     map_db: Arc<Mutex<dyn MapDb + Send>>, config: VisualizationConfig) {
     let opengl = OpenGL::V4_5;
-    let mut window: Sdl2Window = WindowSettings::new(format!("Session {}", session_id), [1920, 1080])
+    let settings = WindowSettings::new(format!("Session {}", session_id), [1920, 1080])
         .graphics_api(opengl)
-        .exit_on_esc(true)
-        .build()
-        .unwrap();
+        .exit_on_esc(true);
+    match config.window_type {
+        WindowType::Glutin => match settings.build::<GlutinWindow>() {
+            Ok(window) => visualize_loop(window, opengl, session_id, session, layers, updates, messages, map_db),
+            Err(e) => error!("Failed to create visualization glutin window: {}", e),
+        }
+        WindowType::SDL2 => match settings.build::<Sdl2Window>() {
+            Ok(window) => visualize_loop(window, opengl, session_id, session, layers, updates, messages, map_db),
+            Err(e) => error!("Failed to create visualization SDL2 window: {}", e),
+        }
+    }
+}
+
+fn visualize_loop<W>(mut window: W, opengl: OpenGL, session_id: i64, session: Arc<RwLock<Session>>,
+                     layers: Arc<Mutex<BTreeMap<usize, Arc<Mutex<Node>>>>>,
+                     updates: Arc<UpdatesQueue>, messages: Arc<Mutex<VecDeque<Message>>>,
+                     map_db: Arc<Mutex<dyn MapDb + Send>>) where W: Window {
     let mut events = Events::new(EventSettings::new().ups(60));
     let mut visualizer = Visualizer::new(opengl, session_id, session, updates, messages, map_db);
 
