@@ -75,3 +75,5 @@ session:
         - name: "Water"
           action: "Drink"
           wait_interval: 3
+visualization:
+  window_type: SDL2
