@@ -5,6 +5,7 @@ map_cache_ttl: 10
 process:
   sessions_path: var/sessions
   write_updates_log: false
+  poll_timeout: 0.01
 session:
   world:
     report_iterations: 100000

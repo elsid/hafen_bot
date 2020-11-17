@@ -5,6 +5,7 @@ use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver};
 use std::thread::{JoinHandle, spawn};
+use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -17,6 +18,7 @@ use crate::bot::visualization::start_visualize_session;
 pub struct ProcessConfig {
     pub sessions_path: String,
     pub write_updates_log: bool,
+    pub poll_timeout: f64,
 }
 
 pub fn start_process_session(session_id: i64, session: Arc<RwLock<Session>>, updates: Arc<UpdatesQueue>,
@@ -38,25 +40,27 @@ fn process_session(session_id: i64, session: Arc<RwLock<Session>>, updates: Arc<
     } else {
         (None, None)
     };
+    let poll_timeout = Duration::from_secs_f64(config.poll_timeout);
     loop {
-        let update = poll_update(&updates);
-        if let Some(sender) = updates_sender.as_ref() {
-            sender.send(Some(update.clone())).unwrap();
-        }
-        match &update.event {
-            Event::Close => break,
-            Event::VisualizationAdd => {
-                add_session_visualization(session_id, &session, &updates, &messages, &visualizers, map_db.clone());
+        if let Some(update) = poll_update(&updates, poll_timeout) {
+            if let Some(sender) = updates_sender.as_ref() {
+                sender.send(Some(update.clone())).unwrap();
             }
-            Event::GetSessionData => {
-                let session_data = session.read().unwrap().as_session_data();
-                let value = serde_json::to_string(&session_data).unwrap();
-                messages.lock().unwrap().push_back(Message::SessionData { value });
+            match &update.event {
+                Event::Close => break,
+                Event::VisualizationAdd => {
+                    add_session_visualization(session_id, &session, &updates, &messages, &visualizers, map_db.clone());
+                }
+                Event::GetSessionData => {
+                    let session_data = session.read().unwrap().as_session_data();
+                    let value = serde_json::to_string(&session_data).unwrap();
+                    messages.lock().unwrap().push_back(Message::SessionData { value });
+                }
+                _ => (),
             }
-            _ => (),
-        }
-        if session.write().unwrap().update(update) {
-            debug!("Session {} is updated", session_id);
+            if session.write().unwrap().update(update) {
+                debug!("Session {} is updated", session_id);
+            }
         }
         while let Some(message) = session.read().unwrap().get_existing_message() {
             let mut locked_messages = messages.lock().unwrap();
@@ -136,12 +140,16 @@ pub fn push_update(updates: &Arc<UpdatesQueue>, update: Update) {
     has_value.notify_one();
 }
 
-fn poll_update(updates: &Arc<UpdatesQueue>) -> Update {
+fn poll_update(updates: &Arc<UpdatesQueue>, timeout: Duration) -> Option<Update> {
     let UpdatesQueue { has_value, values } = &**updates;
-    let mut locked_values = has_value
-        .wait_while(values.lock().unwrap(), |values| values.is_empty())
+    let (mut locked_values, result) = has_value
+        .wait_timeout_while(values.lock().unwrap(), timeout, |values| values.is_empty())
         .unwrap();
-    locked_values.pop_front().unwrap()
+    if result.timed_out() {
+        None
+    } else {
+        Some(locked_values.pop_front().unwrap())
+    }
 }
 
 pub fn count_updates(updates: &Arc<UpdatesQueue>) -> usize {
