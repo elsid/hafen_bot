@@ -20,6 +20,7 @@ use crate::bot::walk_grid::walk_grid;
 #[derive(Clone, Deserialize)]
 pub struct WorldConfig {
     pub water_tiles: HashMap<String, f64>,
+    pub ice_tiles: HashMap<String, f64>,
     pub report_iterations: usize,
     pub found_transition_color: [f32; 4],
     pub path_transition_color: [f32; 4],

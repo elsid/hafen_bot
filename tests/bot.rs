@@ -423,6 +423,8 @@ session:
       gfx/tiles/odeep: 1
       gfx/tiles/owater: 3
       gfx/tiles/water: 3
+    ice_tiles:
+      gfx/tiles/ice: 1
   player:
     meters:
       stamina: gfx/hud/meter/stam
