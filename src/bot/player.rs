@@ -47,7 +47,9 @@ impl<'a> PlayerEquipment<'a> {
 pub struct Player {
     map_view_id: Option<i32>,
     game_ui_id: Option<i32>,
+    inventory_id: Option<i32>,
     belt_id: Option<i32>,
+    belt_inventory_id: Option<i32>,
     name: Option<String>,
     object_id: Option<i64>,
     grid_id: Option<i64>,
@@ -61,8 +63,7 @@ pub struct Player {
     items: Items,
     stamina: Stamina,
     equipment: Equipment,
-    inventory: Inventory,
-    belt: Inventory,
+    widget_inventories: BTreeMap<i32, BTreeMap<i32, Item>>,
 }
 
 impl Player {
@@ -70,7 +71,9 @@ impl Player {
         Self {
             map_view_id: None,
             game_ui_id: None,
+            inventory_id: None,
             belt_id: None,
+            belt_inventory_id: None,
             name: None,
             object_id: None,
             grid_id: None,
@@ -84,8 +87,7 @@ impl Player {
             items: Items::new(config.items.clone()),
             stamina: Stamina::default(),
             equipment: Equipment::new(config.equipment.clone()),
-            inventory: Inventory::default(),
-            belt: Inventory::default(),
+            widget_inventories: BTreeMap::new(),
         }
     }
 
@@ -95,6 +97,14 @@ impl Player {
 
     pub fn game_ui_id(&self) -> Option<i32> {
         self.game_ui_id
+    }
+
+    pub fn inventory_id(&self) -> Option<i32> {
+        self.inventory_id
+    }
+
+    pub fn belt_inventory_id(&self) -> Option<i32> {
+        self.belt_inventory_id
     }
 
     pub fn name(&self) -> Option<&String> {
@@ -132,18 +142,20 @@ impl Player {
         })
     }
 
-    pub fn inventory_items(&self) -> &BTreeMap<i32, Item> {
-        &self.inventory.items
-    }
-
-    pub fn belt_items(&self) -> &BTreeMap<i32, Item> {
-        &self.belt.items
+    pub fn widget_inventories(&self) -> &BTreeMap<i32, BTreeMap<i32, Item>> {
+        &self.widget_inventories
     }
 
     pub fn from_player_data(data: PlayerData, config: PlayerConfig) -> Self {
+        let belt_inventory_id = data.widgets.iter()
+            .find(|v| v.kind == "inv" && Some(v.parent) == data.belt_id)
+            .map(|v| v.id);
+        let inventory_id = data.widgets.iter()
+            .find(|v| v.kind == "inv" && Some(v.parent) == data.game_ui_id && v.pargs.len() >= 1 && v.pargs[0] == "inv")
+            .map(|v| v.id);
         let widgets = data.widgets.into_iter().map(|v| (v.id, v)).collect();
         let resources = data.resources.into_iter().map(|v| (v.id, v)).collect();
-        let items = data.items.iter().map(|v| (v.id, v)).collect();
+        let items = data.items.into_iter().map(|v| (v.id, v)).collect();
         let meters = Meters::from_resources(&resources, config.meters.clone());
         Self {
             map_view_id: data.map_view_id,
@@ -156,9 +168,13 @@ impl Player {
             stamina: Stamina::new(data.stamina, &widgets, meters.stamina),
             meters,
             equipment: Equipment::from_widgets(&widgets, config.equipment.clone()),
-            inventory: Inventory::inventory(data.game_ui_id, &widgets, &items),
+            inventory_id,
             belt_id: data.belt_id,
-            belt: Inventory::belt(data.belt_id, &widgets, &items),
+            belt_inventory_id,
+            widget_inventories: widgets.values()
+                .filter(|v| v.kind == "inv")
+                .map(|v| (v.id, make_inventory(Some(v.id), &widgets, &items)))
+                .collect(),
             widgets,
             map_grids: data.map_grids,
             resources,
@@ -169,8 +185,9 @@ impl Player {
 
     pub fn as_player_data(&self) -> PlayerData {
         let mut items = Vec::new();
-        clone_items(&mut items, &self.inventory.items);
-        clone_items(&mut items, &self.belt.items);
+        for inventory in self.widget_inventories.values() {
+            clone_items(&mut items, &inventory);
+        }
         PlayerData {
             map_view_id: self.map_view_id,
             game_ui_id: self.game_ui_id,
@@ -219,10 +236,9 @@ impl Player {
                     "item" => {
                         if Some(*parent) == self.equipment.widget_id {
                             self.equipment.add_item(*id, pargs);
-                        } else if Some(*parent) == self.inventory.widget_id {
-                            self.inventory.add_item(*id, cargs);
-                        } else if Some(*parent) == self.belt.widget_id {
-                            self.belt.add_item(*id, cargs);
+                        } else if let Some(inventory) = self.widget_inventories.get_mut(parent) {
+                            debug!("Player: add inventory item id={} parent={}", id, parent);
+                            add_inventory_item(*id, pargs, cargs, inventory);
                         }
                     }
                     "wnd" => {
@@ -231,11 +247,15 @@ impl Player {
                         }
                     }
                     "inv" => {
+                        debug!("Player: add widget inventory id={} parent={} pargs={:?}", id, parent, pargs);
                         if Some(*parent) == self.game_ui_id && pargs.len() >= 1 && pargs[0] == "inv" {
-                            self.inventory.widget_id = Some(*id);
+                            debug!("Player: set inventory id");
+                            self.inventory_id = Some(*id);
                         } else if Some(*parent) == self.belt_id {
-                            self.belt.widget_id = Some(*id);
+                            debug!("Player: set belt inventory id");
+                            self.belt_inventory_id = Some(*id);
                         }
+                        self.widget_inventories.insert(*id, BTreeMap::new());
                     }
                     _ => (),
                 }
@@ -272,8 +292,9 @@ impl Player {
                         self.stamina.update_value(*id, args)
                     }
                     "tt" => {
-                        self.inventory.update_item(*id, args, &self.items)
-                            || self.belt.update_item(*id, args, &self.items)
+                        let items = &self.items;
+                        self.widget_inventories.values_mut()
+                            .any(|v| update_inventory_item(*id, args, items, v))
                     }
                     _ => false,
                 }
@@ -293,17 +314,15 @@ impl Player {
                     self.belt_id = None;
                 } else if Some(*id) == self.equipment.widget_id {
                     self.equipment.widget_id = None;
-                } else if Some(*id) == self.belt.widget_id {
-                    self.belt.widget_id = None;
+                } else if Some(*id) == self.belt_inventory_id {
+                    self.belt_inventory_id = None;
                 }
                 if let Some(widget) = self.widgets.remove(id) {
-                    if Some(widget.parent) == self.inventory.widget_id {
-                        self.inventory.remove_item(*id).is_some()
-                    } else if Some(widget.parent) == self.belt.widget_id {
-                        self.belt.remove_item(*id).is_some()
-                    } else {
-                        false
+                    if self.widget_inventories.remove(&widget.id).is_none() {
+                        self.widget_inventories.get_mut(&widget.parent)
+                            .map(|v| v.remove(id));
                     }
+                    true
                 } else {
                     false
                 }
@@ -503,82 +522,64 @@ impl Equipment {
     }
 }
 
-#[derive(Default)]
-struct Inventory {
-    widget_id: Option<i32>,
-    items: BTreeMap<i32, Item>,
-}
-
-impl Inventory {
-    fn inventory(game_ui_id: Option<i32>, widgets: &BTreeMap<i32, Widget>, items: &BTreeMap<i32, &Item>) -> Self {
-        let widget_id = widgets.iter()
-            .find(|(_, v)| v.kind == "inv" && Some(v.parent) == game_ui_id && v.pargs.len() >= 1 && v.pargs[0] == "inv")
-            .map(|(_, v)| v.id);
-        Self::new(widget_id, widgets, items)
-    }
-
-    fn belt(window_id: Option<i32>, widgets: &BTreeMap<i32, Widget>, items: &BTreeMap<i32, &Item>) -> Self {
-        let widget_id = widgets.iter()
-            .find(|(_, v)| v.kind == "inv" && Some(v.parent) == window_id)
-            .map(|(_, v)| v.id);
-        Self::new(widget_id, widgets, items)
-    }
-
-    fn new(widget_id: Option<i32>, widgets: &BTreeMap<i32, Widget>, items: &BTreeMap<i32, &Item>) -> Self {
-        let mut result = Self { widget_id, items: BTreeMap::new() };
-        for widget in widgets.values() {
-            if Some(widget.parent) == widget_id {
-                if let Some(item) = items.get(&widget.id) {
-                    result.items.insert(item.id, Item {
-                        id: item.id,
-                        resource: item.resource,
-                        content: item.content.clone(),
-                    });
-                }
-            }
-        }
-        result
-    }
-
-    fn add_item(&mut self, id: i32, cargs: &Vec<Value>) {
-        if cargs.len() >= 1 {
-            if let Value::Int { value } = &cargs[0] {
-                self.items.insert(id, Item {
-                    id,
-                    resource: *value,
-                    content: None,
+fn make_inventory(widget_id: Option<i32>, widgets: &BTreeMap<i32, Widget>, items: &BTreeMap<i32, Item>) -> BTreeMap<i32, Item> {
+    let mut result = BTreeMap::new();
+    for widget in widgets.values() {
+        if Some(widget.parent) == widget_id {
+            if let Some(item) = items.get(&widget.id) {
+                result.insert(item.id, Item {
+                    id: item.id,
+                    resource: item.resource,
+                    content: item.content.clone(),
+                    position: item.position,
                 });
             }
         }
     }
+    result
+}
 
-    fn remove_item(&mut self, id: i32) -> Option<Item> {
-        self.items.remove(&id)
+fn add_inventory_item(id: i32, pargs: &Vec<Value>, cargs: &Vec<Value>, inventory: &mut BTreeMap<i32, Item>) {
+    let position = pargs.iter().find_map(|v| {
+        if let Value::Coord { value } = v {
+            return Some(*value);
+        }
+        return None;
+    });
+    if cargs.len() >= 1 {
+        if let Value::Int { value } = &cargs[0] {
+            inventory.insert(id, Item {
+                id,
+                resource: *value,
+                content: None,
+                position,
+            });
+        }
     }
+}
 
-    fn update_item(&mut self, id: i32, args: &Vec<Value>, items: &Items) -> bool {
-        if let Some(item) = self.items.get_mut(&id) {
-            if args.len() >= 3 {
-                if let Value::List { value: content } = &args[2] {
-                    if let (Some(content_res), Some(content_name_res), Some(quality_res)) = (items.content, items.content_name, items.quality) {
-                        if content.len() >= 2 && content[0] == content_res {
-                            if let Value::List { value: parameters } = &content[1] {
-                                if let (Some(name), Some(quality)) = (get_string(parameters, content_name_res), get_float32(parameters, quality_res)) {
-                                    item.content = Some(Content { name: name.clone(), quality });
-                                    return true;
-                                }
+fn update_inventory_item(id: i32, args: &Vec<Value>, items: &Items, inventory: &mut BTreeMap<i32, Item>) -> bool {
+    if let Some(item) = inventory.get_mut(&id) {
+        if args.len() >= 3 {
+            if let Value::List { value: content } = &args[2] {
+                if let (Some(content_res), Some(content_name_res), Some(quality_res)) = (items.content, items.content_name, items.quality) {
+                    if content.len() >= 2 && content[0] == content_res {
+                        if let Value::List { value: parameters } = &content[1] {
+                            if let (Some(name), Some(quality)) = (get_string(parameters, content_name_res), get_float32(parameters, quality_res)) {
+                                item.content = Some(Content { name: name.clone(), quality });
+                                return true;
                             }
                         }
                     }
                 }
             }
-            if item.content.is_some() {
-                item.content = None;
-                return true;
-            }
         }
-        false
+        if item.content.is_some() {
+            item.content = None;
+            return true;
+        }
     }
+    false
 }
 
 fn get_float32(values: &Vec<Value>, resource: i32) -> Option<f32> {
@@ -657,6 +658,7 @@ pub struct Item {
     pub id: i32,
     pub resource: i32,
     pub content: Option<Content>,
+    pub position: Option<Vec2i>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

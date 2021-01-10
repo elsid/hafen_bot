@@ -5,6 +5,7 @@ use serde::Deserialize;
 
 use crate::bot::actions::open_belt::OpenBelt;
 use crate::bot::actions::use_item::UseItem;
+use crate::bot::player::Item;
 use crate::bot::protocol::{Message, Update};
 use crate::bot::scene::Scene;
 use crate::bot::tasks::task::Task;
@@ -115,24 +116,33 @@ impl Task for Drinker {
 fn find_container_with_content<'a>(world: &PlayerWorld, liquid_containers: &BTreeSet<String>, contents: &'a Vec<ContentConfig>) -> Option<(i32, &'a String, Duration)> {
     contents.iter()
         .find_map(|config| {
-            world.player_belt_items().iter()
-                .chain(world.player_inventory_items().iter())
-                .find_map(|(_, item)| {
-                    item.content.as_ref()
-                        .and_then(|v| {
-                            if v.name.contains(&config.name) {
-                                world.resources().get(&item.resource)
-                            } else {
-                                None
-                            }
-                        })
-                        .and_then(|v| {
-                            if liquid_containers.contains(&v.name) {
-                                Some((item.id, &config.action, Duration::from_secs_f64(config.wait_interval)))
-                            } else {
-                                None
-                            }
-                        })
+            match world.player_belt_items().map(|belt_items| belt_items.iter()) {
+                Some(v) => find_container_with_content_iter(v, world, liquid_containers, config),
+                None => find_container_with_content_iter(std::iter::empty(), world, liquid_containers, config),
+            }
+        })
+}
+
+fn find_container_with_content_iter<'a, 'b, I>(iter: I, world: &'b PlayerWorld,
+                                               liquid_containers: &BTreeSet<String>,
+                                               config: &'a ContentConfig) -> Option<(i32, &'a String, Duration)>
+    where I: Iterator<Item=(&'b i32, &'b Item)> {
+    iter.chain(world.player_inventory_items().iter())
+        .find_map(|(_, item)| {
+            item.content.as_ref()
+                .and_then(|v| {
+                    if v.name.contains(&config.name) {
+                        world.resources().get(&item.resource)
+                    } else {
+                        None
+                    }
+                })
+                .and_then(|v| {
+                    if liquid_containers.contains(&v.name) {
+                        Some((item.id, &config.action, Duration::from_secs_f64(config.wait_interval)))
+                    } else {
+                        None
+                    }
                 })
         })
 }

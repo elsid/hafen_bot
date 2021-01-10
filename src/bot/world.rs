@@ -70,6 +70,7 @@ impl World {
         if let (
             Some(map_view_id),
             Some(game_ui_id),
+            Some(player_inventory_id),
             Some(player_name),
             Some(player_object_id),
             Some(player_grid_id),
@@ -78,6 +79,7 @@ impl World {
         ) = (
             player.map_view_id(),
             player.game_ui_id(),
+            player.inventory_id(),
             player.name(),
             player.object_id(),
             player.grid_id(),
@@ -97,6 +99,7 @@ impl World {
                                 map_view_id,
                                 game_ui_id,
                                 player,
+                                player_inventory_id,
                                 player_name,
                                 player_object_id,
                                 player_position,
@@ -184,6 +187,7 @@ pub struct PlayerWorld<'a> {
     map_view_id: i32,
     game_ui_id: i32,
     player: &'a Player,
+    player_inventory_id: i32,
     player_name: &'a String,
     player_object_id: i64,
     player_position: Vec2f,
@@ -235,11 +239,12 @@ impl<'a> PlayerWorld<'a> {
     }
 
     pub fn player_inventory_items(&self) -> &BTreeMap<i32, Item> {
-        self.player.inventory_items()
+        &self.player.widget_inventories()[&self.player_inventory_id]
     }
 
-    pub fn player_belt_items(&self) -> &BTreeMap<i32, Item> {
-        self.player.belt_items()
+    pub fn player_belt_items(&self) -> Option<&BTreeMap<i32, Item>> {
+        self.player.belt_inventory_id()
+            .map(|belt_id| &self.player.widget_inventories()[&belt_id])
     }
 
     pub fn player_equipment(&self) -> &PlayerEquipment {
