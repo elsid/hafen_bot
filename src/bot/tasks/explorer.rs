@@ -139,6 +139,8 @@ impl Task for Explorer {
     }
 
     fn update(&mut self, _: &PlayerWorld, _: &Update) {}
+
+    fn restore(&mut self, _: &PlayerWorld) {}
 }
 
 fn make_border_tiles_layer(scene: Scene, border_tiles: &Vec<Vec2i>) -> Layer {

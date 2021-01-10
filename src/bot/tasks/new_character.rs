@@ -166,4 +166,6 @@ impl Task for NewCharacter {
             _ => (),
         }
     }
+
+    fn restore(&mut self, _: &PlayerWorld) {}
 }

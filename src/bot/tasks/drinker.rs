@@ -111,6 +111,8 @@ impl Task for Drinker {
             sip.update(update);
         }
     }
+
+    fn restore(&mut self, _: &PlayerWorld) {}
 }
 
 fn find_container_with_content<'a>(world: &PlayerWorld, liquid_containers: &BTreeSet<String>, contents: &'a Vec<ContentConfig>) -> Option<(i32, &'a String, Duration)> {

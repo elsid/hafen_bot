@@ -50,7 +50,21 @@ impl Task for ExpWndCloser {
                     self.closed.retain(|v| v != id);
                 }
             }
+            Event::Destroy { id } => {
+                debug!("ExpWndCloser: window {} is destroyed", id);
+                self.exp_wnd_ids.retain(|v| v != id);
+                self.closed.retain(|v| v != id);
+            }
             _ => (),
+        }
+    }
+
+    fn restore(&mut self, world: &PlayerWorld) {
+        for widget in world.widgets().values() {
+            if widget.kind.as_str().starts_with("ui/expwnd:") {
+                debug!("ExpWndCloser: restored window {}", widget.id);
+                self.exp_wnd_ids.push(widget.id);
+            }
         }
     }
 }

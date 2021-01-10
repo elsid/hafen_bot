@@ -8,4 +8,6 @@ pub trait Task: Send {
     fn get_next_message(&mut self, world: &PlayerWorld, scene: &Scene) -> Option<Message>;
 
     fn update(&mut self, world: &PlayerWorld, update: &Update);
+
+    fn restore(&mut self, world: &PlayerWorld);
 }

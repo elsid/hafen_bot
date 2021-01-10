@@ -175,6 +175,8 @@ impl Task for PathFinder {
             _ => (),
         }
     }
+
+    fn restore(&mut self, _: &PlayerWorld) {}
 }
 
 fn get_tile_costs<'a>(tile: &String, config: &'a WorldConfig) -> Option<&'a HashMap<String, f64>> {

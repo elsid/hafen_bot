@@ -68,24 +68,30 @@ impl Session {
 
     pub fn from_session_data(session_data: SessionData, map_db: Arc<Mutex<dyn MapDb + Send>>,
                              config: &SessionConfig, cancel: Arc<AtomicBool>) -> Result<Self, String> {
+        let player = Player::from_player_data(session_data.player, config.player.clone());
+        let world = World::from_world_data(session_data.world, config.world.clone(), map_db);
         Ok(Self {
             id: session_data.id,
             last_update: 0,
-            player: Player::from_player_data(session_data.player, config.player.clone()),
             task_id_counter: session_data.task_id_counter,
             tasks: {
                 let mut tasks = Vec::new();
                 for task in session_data.tasks.into_iter() {
+                    let value = make_task(task.name.as_str(), task.params.as_slice(), &config.tasks, &cancel)?;
+                    if let Some(player_world) = world.for_player(&player) {
+                        value.lock().unwrap().restore(&player_world);
+                    }
                     tasks.push(Arc::new(RwLock::new(TaskWithParams {
                         id: task.id,
-                        value: make_task(task.name.as_str(), task.params.as_slice(), &config.tasks, &cancel)?,
+                        value,
                         name: task.name,
                         params: task.params,
                     })));
                 }
                 Arc::new(RwLock::new(tasks))
             },
-            world: World::from_world_data(session_data.world, config.world.clone(), map_db),
+            player,
+            world,
             scene: Scene::new(),
             messages: Arc::new(Mutex::new(VecDeque::new())),
             task_configs: config.tasks.clone(),
