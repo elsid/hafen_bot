@@ -64,6 +64,7 @@ pub struct Player {
     stamina: Stamina,
     equipment: Equipment,
     widget_inventories: BTreeMap<i32, BTreeMap<i32, Item>>,
+    hand: Option<Item>,
 }
 
 impl Player {
@@ -88,6 +89,7 @@ impl Player {
             stamina: Stamina::default(),
             equipment: Equipment::new(config.equipment.clone()),
             widget_inventories: BTreeMap::new(),
+            hand: None,
         }
     }
 
@@ -155,7 +157,7 @@ impl Player {
             .map(|v| v.id);
         let widgets = data.widgets.into_iter().map(|v| (v.id, v)).collect();
         let resources = data.resources.into_iter().map(|v| (v.id, v)).collect();
-        let items = data.items.into_iter().map(|v| (v.id, v)).collect();
+        let items: BTreeMap<i32, Item> = data.items.into_iter().map(|v| (v.id, v)).collect();
         let meters = Meters::from_resources(&resources, config.meters.clone());
         Self {
             map_view_id: data.map_view_id,
@@ -171,6 +173,12 @@ impl Player {
             inventory_id,
             belt_id: data.belt_id,
             belt_inventory_id,
+            hand: data.game_ui_id
+                .and_then(|game_ui| {
+                    widgets.values()
+                        .find(|widget| widget.parent == game_ui && widget.kind == "item")
+                        .and_then(|widget| items.get(&widget.id).cloned())
+                }),
             widget_inventories: widgets.values()
                 .filter(|v| v.kind == "inv")
                 .map(|v| (v.id, make_inventory(Some(v.id), &widgets, &items)))
@@ -187,6 +195,9 @@ impl Player {
         let mut items = Vec::new();
         for inventory in self.widget_inventories.values() {
             clone_items(&mut items, &inventory);
+        }
+        if let Some(item) = self.hand.clone() {
+            items.push(item);
         }
         PlayerData {
             map_view_id: self.map_view_id,
@@ -236,6 +247,8 @@ impl Player {
                     "item" => {
                         if Some(*parent) == self.equipment.widget_id {
                             self.equipment.add_item(*id, pargs);
+                        } else if Some(*parent) == self.game_ui_id {
+                            self.hand = make_item(*id, cargs, None);
                         } else if let Some(inventory) = self.widget_inventories.get_mut(parent) {
                             debug!("Player: add inventory item id={} parent={}", id, parent);
                             add_inventory_item(*id, pargs, cargs, inventory);
@@ -293,7 +306,8 @@ impl Player {
                     }
                     "tt" => {
                         let items = &self.items;
-                        self.widget_inventories.values_mut()
+                        self.hand.as_mut().map(|item| item.id == *id && update_item(args, items, item)).unwrap_or(false)
+                            || self.widget_inventories.values_mut()
                             .any(|v| update_inventory_item(*id, args, items, v))
                     }
                     _ => false,
@@ -318,7 +332,9 @@ impl Player {
                     self.belt_inventory_id = None;
                 }
                 if let Some(widget) = self.widgets.remove(id) {
-                    if self.widget_inventories.remove(&widget.id).is_none() {
+                    if self.hand.as_ref().map(|item| item.id == widget.id).unwrap_or(false) {
+                        self.hand = None;
+                    } else if self.widget_inventories.remove(&widget.id).is_none() {
                         self.widget_inventories.get_mut(&widget.parent)
                             .map(|v| v.remove(id));
                     }
@@ -547,37 +563,15 @@ fn add_inventory_item(id: i32, pargs: &Vec<Value>, cargs: &Vec<Value>, inventory
         return None;
     });
     if cargs.len() >= 1 {
-        if let Value::Int { value } = &cargs[0] {
-            inventory.insert(id, Item {
-                id,
-                resource: *value,
-                content: None,
-                position,
-            });
+        if let Some(item) = make_item(id, cargs, position) {
+            inventory.insert(id, item);
         }
     }
 }
 
 fn update_inventory_item(id: i32, args: &Vec<Value>, items: &Items, inventory: &mut BTreeMap<i32, Item>) -> bool {
     if let Some(item) = inventory.get_mut(&id) {
-        if args.len() >= 3 {
-            if let Value::List { value: content } = &args[2] {
-                if let (Some(content_res), Some(content_name_res), Some(quality_res)) = (items.content, items.content_name, items.quality) {
-                    if content.len() >= 2 && content[0] == content_res {
-                        if let Value::List { value: parameters } = &content[1] {
-                            if let (Some(name), Some(quality)) = (get_string(parameters, content_name_res), get_float32(parameters, quality_res)) {
-                                item.content = Some(Content { name: name.clone(), quality });
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if item.content.is_some() {
-            item.content = None;
-            return true;
-        }
+        return update_item(args, items, item);
     }
     false
 }
@@ -671,4 +665,40 @@ fn clone_items(items: &mut Vec<Item>, src: &BTreeMap<i32, Item>) {
     for item in src.values() {
         items.push(item.clone());
     }
+}
+
+fn make_item(id: i32, cargs: &Vec<Value>, position: Option<Vec2i>) -> Option<Item> {
+    if cargs.len() >= 1 {
+        if let Value::Int { value } = &cargs[0] {
+            return Some(Item {
+                id,
+                resource: *value,
+                content: None,
+                position,
+            });
+        }
+    }
+    None
+}
+
+fn update_item(args: &Vec<Value>, items: &Items, item: &mut Item) -> bool {
+    if args.len() >= 3 {
+        if let Value::List { value: content } = &args[2] {
+            if let (Some(content_res), Some(content_name_res), Some(quality_res)) = (items.content, items.content_name, items.quality) {
+                if content.len() >= 2 && content[0] == content_res {
+                    if let Value::List { value: parameters } = &content[1] {
+                        if let (Some(name), Some(quality)) = (get_string(parameters, content_name_res), get_float32(parameters, quality_res)) {
+                            item.content = Some(Content { name: name.clone(), quality });
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if item.content.is_some() {
+        item.content = None;
+        return true;
+    }
+    false
 }
