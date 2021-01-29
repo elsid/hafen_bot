@@ -247,6 +247,14 @@ impl<'a> PlayerWorld<'a> {
             .map(|belt_id| &self.player.widget_inventories()[&belt_id])
     }
 
+    pub fn player_inventories(&self) -> &BTreeMap<i32, BTreeMap<i32, Item>> {
+        self.player.widget_inventories()
+    }
+
+    pub fn player_hand(&self) -> &Option<Item> {
+        self.player.hand()
+    }
+
     pub fn player_equipment(&self) -> &PlayerEquipment {
         &self.player_equipment
     }

@@ -148,6 +148,10 @@ impl Player {
         &self.widget_inventories
     }
 
+    pub fn hand(&self) -> &Option<Item> {
+        &self.hand
+    }
+
     pub fn from_player_data(data: PlayerData, config: PlayerConfig) -> Self {
         let belt_inventory_id = data.widgets.iter()
             .find(|v| v.kind == "inv" && Some(v.parent) == data.belt_id)

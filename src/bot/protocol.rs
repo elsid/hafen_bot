@@ -189,6 +189,16 @@ impl PartialEq<&[&str]> for Value {
     }
 }
 
+impl PartialEq<Vec2i> for Value {
+    fn eq(&self, other: &Vec2i) -> bool {
+        if let Value::Coord { value } = self {
+            value == other
+        } else {
+            false
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(tag = "type")]
 pub enum Message {
